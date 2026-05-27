@@ -107,13 +107,8 @@ function parseAmount(s: string): number {
 }
 
 function formatInputValue(s: string): string {
-  if (!s) return "";
-  const cleaned = s.replace(/[^\d.,\s]/g, "");
-  const match = cleaned.replace(/\s/g, "").match(/^(\d*)([.,]?)(\d*)$/);
-  if (!match) return cleaned;
-  const [, intPart, sep, decPart] = match;
-  const withSep = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return withSep + (sep || "") + (decPart || "");
+  // No auto-formatting — just strip disallowed characters so the user can type freely.
+  return s.replace(/[^\d.,\s]/g, "");
 }
 
 function todayStr() {
