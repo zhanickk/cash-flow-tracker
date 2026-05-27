@@ -52,6 +52,15 @@ export interface DailyReportData {
   regularExpenseKzt: number;
   personExpenseKzt: number;
   netProfitKzt: number;
+  peopleBalance: {
+    name: string;
+    inKzt: number;
+    outKzt: number;
+    netKzt: number;
+  }[];
+  buyRows: ReportTransaction[];
+  sellRows: ReportTransaction[];
+  personRows: ReportTransaction[];
 }
 
 const FX: Currency[] = ["USD", "EUR", "RUB", "CNY", "GOLD"];
@@ -179,7 +188,33 @@ export function buildDailyReport(
   const incomeKzt = incomeByCurrency.KZT || 0;
   const regularExpenseKzt = regularExpenseByCurrency.KZT || 0;
   const personExpenseKzt = personExpenseByCurrency.KZT || 0;
-  const netProfitKzt = totalFxMarginKzt + incomeKzt - regularExpenseKzt;
+  const netProfitKzt = totalFxMarginKzt - regularExpenseKzt;
+  const buyRows = transactions.filter((t) => t.kind === "buy");
+  const sellRows = transactions.filter((t) => t.kind === "sell");
+  const personRows = transactions.filter((t) => t.kind === "expense" && t.expenseType === "person");
+  const peopleMap = new Map<
+    string,
+    { name: string; inKzt: number; outKzt: number; netKzt: number }
+  >();
+  for (const tx of transactions) {
+    const name = tx.name?.trim();
+    if (!name) continue;
+    const inSide = tx.kind === "income";
+    const outSide = tx.kind === "expense" && tx.expenseType === "person";
+    if (!inSide && !outSide) continue;
+    const kzt = tx.currency === "KZT" ? tx.amount : 0;
+    const prev = peopleMap.get(name) ?? { name, inKzt: 0, outKzt: 0, netKzt: 0 };
+    const next = {
+      name,
+      inKzt: prev.inKzt + (inSide ? kzt : 0),
+      outKzt: prev.outKzt + (outSide ? kzt : 0),
+      netKzt: prev.netKzt + (inSide ? kzt : outSide ? -kzt : 0),
+    };
+    peopleMap.set(name, next);
+  }
+  const peopleBalance = [...peopleMap.values()].sort(
+    (a, b) => Math.abs(b.netKzt) - Math.abs(a.netKzt),
+  );
 
   const rows = [...transactions]
     .sort((a, b) => a.ts - b.ts)
@@ -218,6 +253,10 @@ export function buildDailyReport(
     regularExpenseKzt,
     personExpenseKzt,
     netProfitKzt,
+    peopleBalance,
+    buyRows,
+    sellRows,
+    personRows,
   };
 }
 
@@ -257,6 +296,17 @@ function styleDataSheet(ws: ExcelJS.Worksheet) {
   ws.views = [{ state: "frozen", ySplit: 1 }];
 }
 
+function styleRowBorders(row: ExcelJS.Row) {
+  row.eachCell((cell) => {
+    cell.border = {
+      top: { style: "thin", color: { argb: "FFE5E7EB" } },
+      left: { style: "thin", color: { argb: "FFE5E7EB" } },
+      bottom: { style: "thin", color: { argb: "FFE5E7EB" } },
+      right: { style: "thin", color: { argb: "FFE5E7EB" } },
+    };
+  });
+}
+
 export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Кассовый лист";
@@ -288,7 +338,6 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
   };
 
   addSummaryRow("Маржа обмена (KZT)", data.totalFxMarginKzt, "good");
-  addSummaryRow("Приходы KZT", data.incomeKzt);
   addSummaryRow("Обычные расходы KZT", data.regularExpenseKzt, "bad");
   addSummaryRow(
     "Чистая прибыль дня (KZT)",
@@ -296,6 +345,7 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
     data.netProfitKzt >= 0 ? "good" : "bad",
   );
   r++;
+  addSummaryRow("Приходы KZT (инфо)", data.incomeKzt);
   addSummaryRow("Выдачи людям KZT (инфо)", data.personExpenseKzt);
 
   r += 1;
@@ -308,6 +358,10 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
   r++;
   for (const c of ALL) {
     summary.getRow(r).values = [c, data.opening[c], data.closing[c]];
+    styleRowBorders(summary.getRow(r));
+    summary.getRow(r).eachCell((cell, col) => {
+      if (col > 1) cell.numFmt = "#,##0.00";
+    });
     r++;
   }
 
@@ -353,6 +407,13 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
       row.marginKzt,
       row.netKztFlow,
     ]);
+    const rr = fx.lastRow;
+    if (rr) {
+      styleRowBorders(rr);
+      rr.eachCell((cell, i) => {
+        if (i > 1) cell.numFmt = "#,##0.0000";
+      });
+    }
   }
   fx.autoFilter = { from: "A1", to: "J1" };
   styleDataSheet(fx);
@@ -392,28 +453,132 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
       row.kztEffect ?? "",
       row.note,
     ]);
+    const rr = ops.lastRow;
+    if (rr) {
+      styleRowBorders(rr);
+      rr.getCell(5).numFmt = "#,##0.00";
+      rr.getCell(6).numFmt = "#,##0.0000";
+      rr.getCell(7).numFmt = "#,##0.00";
+    }
   }
   ops.autoFilter = { from: "A1", to: "H1" };
   styleDataSheet(ops);
 
-  const exp = wb.addWorksheet("Расходы и приходы", {
+  const exp = wb.addWorksheet("Обычные расходы", {
     properties: { tabColor: { argb: "FFDC2626" } },
   });
   exp.columns = [{ width: 22 }, { width: 14 }, { width: 14 }];
   exp.addRow(["Категория", "Валюта", "Сумма"]);
   styleHeaderRow(exp.getRow(1));
   for (const c of ALL) {
-    const inc = data.incomeByCurrency[c];
-    if (inc) exp.addRow(["Приход", c, inc]);
-  }
-  for (const c of ALL) {
     const ex = data.regularExpenseByCurrency[c];
     if (ex) exp.addRow(["Обычный расход", c, ex]);
   }
-  for (const c of ALL) {
-    const ex = data.personExpenseByCurrency[c];
-    if (ex) exp.addRow(["Выдача людям", c, ex]);
+  exp.eachRow((row, idx) => {
+    if (idx === 1) return;
+    styleRowBorders(row);
+    row.getCell(3).numFmt = "#,##0.00";
+  });
+
+  const buySheet = wb.addWorksheet("Купля", { properties: { tabColor: { argb: "FF0EA5E9" } } });
+  buySheet.columns = [
+    { width: 18 },
+    { width: 18 },
+    { width: 10 },
+    { width: 14 },
+    { width: 14 },
+    { width: 16 },
+  ];
+  styleHeaderRow(buySheet.addRow(["Время", "Комментарий", "Валюта", "Сумма", "Курс", "KZT ушло"]));
+  for (const tx of data.buyRows) {
+    buySheet.addRow([
+      new Date(tx.ts).toLocaleString("ru-RU"),
+      tx.name || "—",
+      tx.currency,
+      tx.amount,
+      tx.rate ?? "",
+      -(tx.amount * (tx.rate || 0)),
+    ]);
+    const rr = buySheet.lastRow;
+    if (rr) {
+      styleRowBorders(rr);
+      rr.getCell(4).numFmt = "#,##0.00";
+      rr.getCell(5).numFmt = "#,##0.0000";
+      rr.getCell(6).numFmt = "#,##0.00";
+    }
   }
+  styleDataSheet(buySheet);
+
+  const sellSheet = wb.addWorksheet("Продажа", { properties: { tabColor: { argb: "FF16A34A" } } });
+  sellSheet.columns = [
+    { width: 18 },
+    { width: 18 },
+    { width: 10 },
+    { width: 14 },
+    { width: 14 },
+    { width: 16 },
+  ];
+  styleHeaderRow(
+    sellSheet.addRow(["Время", "Комментарий", "Валюта", "Сумма", "Курс", "KZT пришло"]),
+  );
+  for (const tx of data.sellRows) {
+    sellSheet.addRow([
+      new Date(tx.ts).toLocaleString("ru-RU"),
+      tx.name || "—",
+      tx.currency,
+      tx.amount,
+      tx.rate ?? "",
+      tx.amount * (tx.rate || 0),
+    ]);
+    const rr = sellSheet.lastRow;
+    if (rr) {
+      styleRowBorders(rr);
+      rr.getCell(4).numFmt = "#,##0.00";
+      rr.getCell(5).numFmt = "#,##0.0000";
+      rr.getCell(6).numFmt = "#,##0.00";
+    }
+  }
+  styleDataSheet(sellSheet);
+
+  const peopleSheet = wb.addWorksheet("Кому отдали", {
+    properties: { tabColor: { argb: "FF9333EA" } },
+  });
+  peopleSheet.columns = [{ width: 18 }, { width: 24 }, { width: 10 }, { width: 14 }, { width: 14 }];
+  styleHeaderRow(peopleSheet.addRow(["Время", "Кто забрал / кому", "Валюта", "Сумма", "KZT"]));
+  for (const tx of data.personRows) {
+    peopleSheet.addRow([
+      new Date(tx.ts).toLocaleString("ru-RU"),
+      tx.name || "—",
+      tx.currency,
+      tx.amount,
+      tx.currency === "KZT" ? tx.amount : "",
+    ]);
+    const rr = peopleSheet.lastRow;
+    if (rr) {
+      styleRowBorders(rr);
+      rr.getCell(4).numFmt = "#,##0.00";
+      rr.getCell(5).numFmt = "#,##0.00";
+    }
+  }
+  styleDataSheet(peopleSheet);
+
+  const peopleBalanceSheet = wb.addWorksheet("Лица на балансе", {
+    properties: { tabColor: { argb: "FF7C3AED" } },
+  });
+  peopleBalanceSheet.columns = [{ width: 24 }, { width: 16 }, { width: 16 }, { width: 16 }];
+  styleHeaderRow(peopleBalanceSheet.addRow(["Имя", "Внесли KZT", "Забрали KZT", "Баланс KZT"]));
+  for (const row of data.peopleBalance) {
+    peopleBalanceSheet.addRow([row.name, row.inKzt, row.outKzt, row.netKzt]);
+    const rr = peopleBalanceSheet.lastRow;
+    if (rr) {
+      styleRowBorders(rr);
+      rr.getCell(2).numFmt = "#,##0.00";
+      rr.getCell(3).numFmt = "#,##0.00";
+      rr.getCell(4).numFmt = "#,##0.00";
+    }
+  }
+  styleDataSheet(peopleBalanceSheet);
+
   styleDataSheet(exp);
 
   const buffer = await wb.xlsx.writeBuffer();

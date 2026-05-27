@@ -39,6 +39,7 @@ import {
   Sunrise,
   Download,
   FolderOpen,
+  Users,
 } from "lucide-react";
 import {
   buildDailyReport,
@@ -139,74 +140,45 @@ function formatInputValue(s: string): string {
   return groupedInt === "0" && intRaw === "" ? "" : groupedInt;
 }
 
-type RateFormatKind = "usd_eur" | "cny" | "rub" | "gold";
-
-function rateFormatKind(currency: Currency): RateFormatKind {
-  switch (currency) {
-    case "USD":
-    case "EUR":
-      return "usd_eur";
-    case "CNY":
-      return "cny";
-    case "RUB":
-      return "rub";
-    case "GOLD":
-      return "gold";
-    default:
-      return "usd_eur";
-  }
-}
-
-/** USD/EUR: 470 → 470.4 → 470.45; CNY: xx.xxx; RUB: x.xxx; GOLD: без точки */
+/** For all FX: 470 -> 470.1 -> 470.1234 */
 function formatRateInput(s: string, currency: Currency): string {
   const digits = s.replace(/\D/g, "");
   if (!digits) return "";
-
-  const kind = rateFormatKind(currency);
-  if (kind === "gold") return digits;
-
-  if (kind === "usd_eur") {
-    const minInt = 3;
-    const fracMax = 2;
-    if (digits.length <= minInt) return digits;
-    const fracLen = Math.min(fracMax, digits.length - minInt);
-    const intPart = digits.slice(0, digits.length - fracLen);
-    const fracPart = digits.slice(-fracLen);
-    return `${intPart}.${fracPart}`;
-  }
-
-  const intMax = kind === "cny" ? 2 : 1;
-  const fracMax = 3;
-  const d = digits.slice(0, intMax + fracMax);
-  if (d.length <= intMax) return d;
-  const fracLen = Math.min(fracMax, d.length - intMax);
-  const intPart = d.slice(0, d.length - fracLen);
-  const fracPart = d.slice(-fracLen);
+  if (currency === "KZT") return digits;
+  const minInt = 3;
+  const fracMax = 4;
+  if (digits.length <= minInt) return digits;
+  const fracLen = Math.min(fracMax, digits.length - minInt);
+  const intPart = digits.slice(0, digits.length - fracLen);
+  const fracPart = digits.slice(-fracLen);
   return `${intPart}.${fracPart}`;
 }
 
 function rateToDigits(rate: number, currency: Currency): string {
-  if (currency === "GOLD") return String(Math.round(rate));
+  if (currency === "KZT") return String(Math.round(rate));
   const [intPart = "0", fracPart = ""] = rate.toString().split(".");
   const frac = fracPart.replace(/\D/g, "");
-  const kind = rateFormatKind(currency);
-  if (kind === "usd_eur") return intPart + frac.slice(0, 2);
-  if (kind === "cny") return intPart.slice(0, 2) + frac.slice(0, 3);
-  if (kind === "rub") return intPart.slice(0, 1) + frac.slice(0, 3);
-  return intPart + frac;
+  return intPart + frac.slice(0, 4);
 }
 
 function ratePlaceholder(currency: Currency): string {
-  switch (rateFormatKind(currency)) {
-    case "usd_eur":
-      return "470.00";
-    case "cny":
-      return "47.000";
-    case "rub":
-      return "4.000";
-    case "gold":
-      return "Курс";
-  }
+  if (currency === "KZT") return "Курс";
+  return "470.0000";
+}
+
+const CURRENCY_FLAG: Record<Currency, string> = {
+  USD: "🇺🇸",
+  EUR: "🇪🇺",
+  RUB: "🇷🇺",
+  CNY: "🇨🇳",
+  GOLD: "🏅",
+  KZT: "🇰🇿",
+};
+
+function onEnterSubmit(e: React.KeyboardEvent<HTMLInputElement>, submit: () => void) {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  submit();
 }
 
 function onCurrencyChange(
@@ -307,6 +279,7 @@ function Index() {
   const [newDayOpen, setNewDayOpen] = useState(false);
   const [newDayPin, setNewDayPin] = useState("");
   const [newDayPinError, setNewDayPinError] = useState("");
+  const [peopleOpen, setPeopleOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -330,6 +303,31 @@ function Index() {
       for (const [k, v] of Object.entries(d)) t[k as Currency] += v || 0;
     }
     return t;
+  }, [transactions]);
+
+  const peopleBalance = useMemo(() => {
+    const map = new Map<
+      string,
+      { name: string; inKzt: number; outKzt: number; netKzt: number; txCount: number }
+    >();
+    for (const tx of transactions) {
+      const person = tx.name?.trim();
+      if (!person) continue;
+      const isIn = tx.kind === "income";
+      const isOut = tx.kind === "expense" && tx.expenseType === "person";
+      if (!isIn && !isOut) continue;
+      const valueKzt = tx.currency === "KZT" ? tx.amount : 0;
+      const prev = map.get(person) ?? { name: person, inKzt: 0, outKzt: 0, netKzt: 0, txCount: 0 };
+      const next = {
+        ...prev,
+        inKzt: prev.inKzt + (isIn ? valueKzt : 0),
+        outKzt: prev.outKzt + (isOut ? valueKzt : 0),
+        netKzt: prev.netKzt + (isIn ? valueKzt : isOut ? -valueKzt : 0),
+        txCount: prev.txCount + 1,
+      };
+      map.set(person, next);
+    }
+    return [...map.values()].sort((a, b) => Math.abs(b.netKzt) - Math.abs(a.netKzt));
   }, [transactions]);
 
   function logHistory(entry: Omit<HistoryEntry, "id" | "ts">) {
@@ -450,8 +448,11 @@ function Index() {
       {/* SECTION 1 — Sticky summary bar */}
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto max-w-7xl px-3 py-2">
-          <div className="text-center text-xs font-medium capitalize text-muted-foreground sm:text-sm">
-            {todayStr()}
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-lg font-semibold tracking-wide text-primary">Dimak</div>
+            <div className="text-center text-xs font-medium capitalize text-muted-foreground sm:text-sm">
+              {todayStr()}
+            </div>
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2 sm:gap-3">
             {FX_CURRENCIES.map((c) => (
@@ -472,7 +473,7 @@ function Index() {
         </div>
       </header>
 
-      {/* SECTION 2 — 4-quadrant grid */}
+      {/* SECTION 2 — Main grid */}
       <main className="mx-auto grid max-w-7xl gap-4 p-3 sm:p-4 lg:grid-cols-2">
         <div className="grid gap-4">
           <OpeningCard
@@ -488,18 +489,20 @@ function Index() {
             onDelete={deleteTx}
           />
         </div>
-        <SellCard
-          txs={transactions.filter((t) => t.kind === "sell")}
-          onAdd={addTx}
-          onUpdate={updateTx}
-          onDelete={deleteTx}
-        />
-        <IncomeCard
-          txs={transactions.filter((t) => t.kind === "income")}
-          onAdd={addTx}
-          onUpdate={updateTx}
-          onDelete={deleteTx}
-        />
+        <div className="grid gap-4">
+          <SellCard
+            txs={transactions.filter((t) => t.kind === "sell")}
+            onAdd={addTx}
+            onUpdate={updateTx}
+            onDelete={deleteTx}
+          />
+          <IncomeCard
+            txs={transactions.filter((t) => t.kind === "income")}
+            onAdd={addTx}
+            onUpdate={updateTx}
+            onDelete={deleteTx}
+          />
+        </div>
         <ExpenseRegularCard
           txs={transactions.filter((t) => t.kind === "expense" && t.expenseType !== "person")}
           onAdd={addTx}
@@ -611,6 +614,17 @@ function Index() {
             Перезапустить кассу
           </Button>
         </div>
+        <div className="lg:col-span-2">
+          <Button
+            variant="outline"
+            className="w-full gap-2"
+            onClick={() => setPeopleOpen(true)}
+            disabled={peopleBalance.length === 0}
+          >
+            <Users className="h-4 w-4" />
+            Лица на балансе
+          </Button>
+        </div>
         {!reportDoneToday && transactions.length > 0 && (
           <p className="text-center text-xs text-muted-foreground lg:col-span-2">
             «Новый день» доступен после формирования дневного отчёта
@@ -645,6 +659,37 @@ function Index() {
         onDownload={handleDownloadReport}
         onPickFolder={pickReportsDirectory}
       />
+
+      <Dialog open={peopleOpen} onOpenChange={setPeopleOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Лица на балансе</DialogTitle>
+            <DialogDescription>Свод по людям: вносили и забирали деньги</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh] rounded-md border border-border">
+            <ul className="divide-y divide-border">
+              {peopleBalance.map((p) => (
+                <li
+                  key={p.name}
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-3 py-2 text-xs"
+                >
+                  <span className="font-medium">{p.name}</span>
+                  <span className="tabular-nums text-success">+{fmt(p.inKzt)} ₸</span>
+                  <span className="tabular-nums text-danger">-{fmt(p.outKzt)} ₸</span>
+                  <span
+                    className={cn(
+                      "tabular-nums font-semibold",
+                      p.netKzt >= 0 ? "text-success" : "text-danger",
+                    )}
+                  >
+                    {fmt(p.netKzt)} ₸
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={newDayOpen} onOpenChange={setNewDayOpen}>
         <DialogContent>
@@ -749,7 +794,7 @@ function DailyReportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[min(90vh,720px)] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex max-h-[92vh] max-w-5xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b border-border px-4 py-3">
           <DialogTitle className="flex items-center gap-2 text-base">
             <FileSpreadsheet className="h-5 w-5 text-primary" />
@@ -785,15 +830,17 @@ function DailyReportDialog({
                   {fmt(data.netProfitKzt)} ₸
                 </div>
                 <div className="mt-1 text-[10px] text-muted-foreground">
-                  маржа + приходы KZT − обычные расходы KZT
+                  маржа − обычные расходы KZT
                 </div>
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
               <div className="rounded-md bg-muted/60 p-2">
-                <div className="text-muted-foreground">Приходы KZT</div>
-                <div className="font-semibold tabular-nums">{fmt(data.incomeKzt)}</div>
+                <div className="text-muted-foreground">Приходы KZT (инфо)</div>
+                <div className="font-semibold tabular-nums text-muted-foreground">
+                  {fmt(data.incomeKzt)}
+                </div>
               </div>
               <div className="rounded-md bg-muted/60 p-2">
                 <div className="text-muted-foreground">Расходы KZT</div>
@@ -850,7 +897,7 @@ function DailyReportDialog({
 
             <div>
               <h4 className="mb-2 text-sm font-semibold">Операции ({data.rows.length})</h4>
-              <div className="max-h-48 overflow-y-auto rounded-md border border-border">
+              <div className="max-h-72 overflow-y-auto rounded-md border border-border">
                 <table className="w-full text-[11px]">
                   <thead className="sticky top-0 bg-card">
                     <tr className="border-b border-border text-muted-foreground">
@@ -871,6 +918,83 @@ function DailyReportDialog({
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="mb-2 text-sm font-semibold">Кто забрал / кому отдали</h4>
+              <div className="rounded-md border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-accent">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Имя</th>
+                      <th className="px-2 py-1.5 text-right">Сумма</th>
+                      <th className="px-2 py-1.5 text-right">Валюта</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.rows
+                      .filter((r) => r.kind === "Выдача (кому/забрал)")
+                      .map((r, i) => (
+                        <tr key={`${r.name}-${i}`} className="border-t border-border">
+                          <td className="px-2 py-1">{r.name}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{fmt(r.amount)}</td>
+                          <td className="px-2 py-1 text-right">{r.currency}</td>
+                        </tr>
+                      ))}
+                    {data.rows.every((r) => r.kind !== "Выдача (кому/забрал)") && (
+                      <tr>
+                        <td colSpan={3} className="px-2 py-2 text-center text-muted-foreground">
+                          Нет выдач людям
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="mb-2 text-sm font-semibold">Лица на балансе (суммарно, KZT)</h4>
+              <div className="rounded-md border border-border">
+                <table className="w-full text-xs">
+                  <thead className="bg-accent">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Имя</th>
+                      <th className="px-2 py-1.5 text-right">Внесли</th>
+                      <th className="px-2 py-1.5 text-right">Забрали</th>
+                      <th className="px-2 py-1.5 text-right">Баланс</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.peopleBalance.map((p) => (
+                      <tr key={p.name} className="border-t border-border">
+                        <td className="px-2 py-1">{p.name}</td>
+                        <td className="px-2 py-1 text-right tabular-nums text-success">
+                          +{fmt(p.inKzt)}
+                        </td>
+                        <td className="px-2 py-1 text-right tabular-nums text-danger">
+                          -{fmt(p.outKzt)}
+                        </td>
+                        <td
+                          className={cn(
+                            "px-2 py-1 text-right tabular-nums font-semibold",
+                            p.netKzt >= 0 ? "text-success" : "text-danger",
+                          )}
+                        >
+                          {fmt(p.netKzt)}
+                        </td>
+                      </tr>
+                    ))}
+                    {data.peopleBalance.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-2 py-2 text-center text-muted-foreground">
+                          Пока нет данных по людям
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -916,7 +1040,9 @@ function BalancePill({ code, label, value }: { code: Currency; label: string; va
         value === 0 && "border-border",
       )}
     >
-      <span className="mr-1.5 text-xs font-semibold text-muted-foreground">{label}</span>
+      <span className="mr-1.5 text-xs font-semibold text-muted-foreground">
+        {CURRENCY_FLAG[code]} {label}
+      </span>
       <span
         className={cn(
           "font-semibold tabular-nums",
@@ -948,7 +1074,7 @@ function CurrencySelect({
       <SelectContent>
         {CURRENCIES.filter((c) => !exclude?.includes(c.code)).map((c) => (
           <SelectItem key={c.code} value={c.code}>
-            {c.label}
+            {CURRENCY_FLAG[c.code]} {c.label}
           </SelectItem>
         ))}
       </SelectContent>
@@ -961,11 +1087,13 @@ function AmountInput({
   onChange,
   placeholder,
   className,
+  onEnter,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   className?: string;
+  onEnter?: () => void;
 }) {
   return (
     <Input
@@ -973,6 +1101,7 @@ function AmountInput({
       value={value}
       placeholder={placeholder ?? "0"}
       onChange={(e) => onChange(formatInputValue(e.target.value))}
+      onKeyDown={(e) => onEnter && onEnterSubmit(e, onEnter)}
       className={cn("tabular-nums", className)}
     />
   );
@@ -983,11 +1112,13 @@ function RateInput({
   onChange,
   currency,
   className,
+  onEnter,
 }: {
   value: string;
   onChange: (v: string) => void;
   currency: Currency;
   className?: string;
+  onEnter?: () => void;
 }) {
   return (
     <Input
@@ -995,6 +1126,7 @@ function RateInput({
       value={value}
       placeholder={ratePlaceholder(currency)}
       onChange={(e) => onChange(formatRateInput(e.target.value, currency))}
+      onKeyDown={(e) => onEnter && onEnterSubmit(e, onEnter)}
       className={cn("tabular-nums", className)}
     />
   );
@@ -1141,7 +1273,7 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowPr
         <span className="truncate text-foreground">
           {tx.name && <span className="font-medium">{tx.name} · </span>}
           <span className="tabular-nums">
-            {fmt(tx.amount)} {tx.currency}
+            {fmt(tx.amount)} {CURRENCY_FLAG[tx.currency]} {tx.currency}
           </span>
           {tx.rate ? <span className="text-muted-foreground"> × {tx.rate}</span> : null}
         </span>
@@ -1172,7 +1304,7 @@ function TxList({ txs, ...props }: { txs: Transaction[] } & Omit<RowProps, "tx">
     );
   }
   return (
-    <ScrollArea className="h-44 rounded-md border border-border bg-muted/30">
+    <ScrollArea className="h-80 rounded-md border border-border bg-muted/30">
       <ul className="divide-y divide-border">
         {[...txs].reverse().map((t) => (
           <TxRow key={t.id} tx={t} {...props} />
@@ -1204,7 +1336,7 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
     <SectionCard title="Остаток на начало дня" icon={Wallet} tone="primary" badge={`${txs.length}`}>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
         <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" />
+        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
         <Button
           onClick={submit}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
@@ -1212,7 +1344,7 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
           <Plus className="h-4 w-4" /> Добавить
         </Button>
       </div>
-      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} />
+      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName />
     </SectionCard>
   );
 }
@@ -1245,8 +1377,13 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         />
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма валюты" />
-        <RateInput value={rate} onChange={setRate} currency={currency} />
+        <AmountInput
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма валюты"
+          onEnter={submit}
+        />
+        <RateInput value={rate} onChange={setRate} currency={currency} onEnter={submit} />
         <Button onClick={submit} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
@@ -1290,8 +1427,13 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         />
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма валюты" />
-        <RateInput value={rate} onChange={setRate} currency={currency} />
+        <AmountInput
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма валюты"
+          onEnter={submit}
+        />
+        <RateInput value={rate} onChange={setRate} currency={currency} onEnter={submit} />
         <Button
           onClick={submit}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
@@ -1329,9 +1471,14 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       badge={`${txs.length}`}
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-        <Input placeholder="От кого" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
+          placeholder="От кого"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => onEnterSubmit(e, submit)}
+        />
         <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" />
+        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
         <Button
           onClick={submit}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
@@ -1347,11 +1494,19 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
 function ExpenseRegularCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
+  const [name, setName] = useState("");
   const submit = () => {
     const a = parseAmount(amount);
     if (a <= 0) return;
-    onAdd({ kind: "expense", currency, amount: a, expenseType: "regular" });
+    onAdd({
+      kind: "expense",
+      currency,
+      amount: a,
+      name: name.trim() || undefined,
+      expenseType: "regular",
+    });
     setAmount("");
+    setName("");
   };
   return (
     <SectionCard
@@ -1360,9 +1515,15 @@ function ExpenseRegularCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       tone="danger"
       badge={`${txs.length}`}
     >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1.2fr_1fr_1fr_auto]">
+        <Input
+          placeholder="Название расхода"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => onEnterSubmit(e, submit)}
+        />
         <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" />
+        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
         <Button onClick={submit} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
@@ -1395,9 +1556,10 @@ function ExpensePersonCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
           placeholder="Кто забрал / кому отдали"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => onEnterSubmit(e, submit)}
         />
         <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" />
+        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
         <Button onClick={submit} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
