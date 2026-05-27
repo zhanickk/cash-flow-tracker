@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -175,10 +175,11 @@ const CURRENCY_FLAG: Record<Currency, string> = {
   KZT: "🇰🇿",
 };
 
-function onEnterSubmit(e: React.KeyboardEvent<HTMLInputElement>, submit: () => void) {
+function handleEnterKey(e: React.KeyboardEvent, next?: () => void, submit?: () => void) {
   if (e.key !== "Enter") return;
   e.preventDefault();
-  submit();
+  if (next) next();
+  else if (submit) submit();
 }
 
 function onCurrencyChange(
@@ -710,6 +711,7 @@ function Index() {
               setNewDayPin(e.target.value.replace(/\D/g, "").slice(0, 4));
               setNewDayPinError("");
             }}
+            onKeyDown={(e) => handleEnterKey(e, undefined, tryNewDay)}
             className="text-center text-2xl tracking-[0.5em]"
             autoFocus
           />
@@ -755,6 +757,7 @@ function Index() {
               setPin(e.target.value.replace(/\D/g, "").slice(0, 4));
               setPinError("");
             }}
+            onKeyDown={(e) => handleEnterKey(e, undefined, tryReset)}
             className="text-center text-2xl tracking-[0.5em]"
             autoFocus
           />
@@ -1057,18 +1060,41 @@ function BalancePill({ code, label, value }: { code: Currency; label: string; va
   );
 }
 
+const FlowInput = forwardRef<
+  HTMLInputElement,
+  React.ComponentProps<typeof Input> & {
+    onEnterNext?: () => void;
+    onEnterSubmit?: () => void;
+  }
+>(function FlowInput({ onEnterNext, onEnterSubmit, onKeyDown, ...props }, ref) {
+  return (
+    <Input
+      ref={ref}
+      {...props}
+      onKeyDown={(e) => {
+        onKeyDown?.(e);
+        handleEnterKey(e, onEnterNext, onEnterSubmit);
+      }}
+    />
+  );
+});
+
 function CurrencySelect({
   value,
   onChange,
   exclude,
+  triggerRef,
+  onEnterNext,
 }: {
   value: Currency;
   onChange: (c: Currency) => void;
   exclude?: Currency[];
+  triggerRef?: React.RefObject<HTMLButtonElement | null>;
+  onEnterNext?: () => void;
 }) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as Currency)}>
-      <SelectTrigger>
+      <SelectTrigger ref={triggerRef} onKeyDown={(e) => handleEnterKey(e, onEnterNext)}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -1082,55 +1108,56 @@ function CurrencySelect({
   );
 }
 
-function AmountInput({
-  value,
-  onChange,
-  placeholder,
-  className,
-  onEnter,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  className?: string;
-  onEnter?: () => void;
-}) {
+const AmountInput = forwardRef<
+  HTMLInputElement,
+  {
+    value: string;
+    onChange: (v: string) => void;
+    placeholder?: string;
+    className?: string;
+    onEnterNext?: () => void;
+    onEnterSubmit?: () => void;
+  }
+>(function AmountInput(
+  { value, onChange, placeholder, className, onEnterNext, onEnterSubmit },
+  ref,
+) {
   return (
     <Input
+      ref={ref}
       inputMode="decimal"
       value={value}
       placeholder={placeholder ?? "0"}
       onChange={(e) => onChange(formatInputValue(e.target.value))}
-      onKeyDown={(e) => onEnter && onEnterSubmit(e, onEnter)}
+      onKeyDown={(e) => handleEnterKey(e, onEnterNext, onEnterSubmit)}
       className={cn("tabular-nums", className)}
     />
   );
-}
+});
 
-function RateInput({
-  value,
-  onChange,
-  currency,
-  className,
-  onEnter,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  currency: Currency;
-  className?: string;
-  onEnter?: () => void;
-}) {
+const RateInput = forwardRef<
+  HTMLInputElement,
+  {
+    value: string;
+    onChange: (v: string) => void;
+    currency: Currency;
+    className?: string;
+    onEnterNext?: () => void;
+    onEnterSubmit?: () => void;
+  }
+>(function RateInput({ value, onChange, currency, className, onEnterNext, onEnterSubmit }, ref) {
   return (
     <Input
+      ref={ref}
       inputMode="numeric"
       value={value}
       placeholder={ratePlaceholder(currency)}
       onChange={(e) => onChange(formatRateInput(e.target.value, currency))}
-      onKeyDown={(e) => onEnter && onEnterSubmit(e, onEnter)}
+      onKeyDown={(e) => handleEnterKey(e, onEnterNext, onEnterSubmit)}
       className={cn("tabular-nums", className)}
     />
   );
-}
+});
 
 function SectionCard({
   title,
@@ -1198,6 +1225,10 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowPr
   const [rate, setRate] = useState(
     tx.rate ? formatRateInput(rateToDigits(tx.rate, tx.currency), tx.currency) : "",
   );
+  const nameRef = useRef<HTMLInputElement>(null);
+  const currencyRef = useRef<HTMLButtonElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
+  const rateRef = useRef<HTMLInputElement>(null);
 
   const isPlus = ["opening", "income", "sell"].includes(tx.kind);
 
@@ -1219,22 +1250,40 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowPr
     return (
       <li className="space-y-2 bg-accent/40 px-3 py-2">
         {withName && (
-          <Input
+          <FlowInput
+            ref={nameRef}
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Имя"
             className="h-8 text-xs"
+            onEnterNext={() => currencyRef.current?.focus()}
           />
         )}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <AmountInput
+            ref={amountRef}
+            value={amount}
+            onChange={setAmount}
+            placeholder="Сумма"
+            className="h-9"
+            onEnterNext={() => currencyRef.current?.focus()}
+          />
           <CurrencySelect
             value={currency}
             onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
             exclude={excludeKzt ? ["KZT"] : []}
+            triggerRef={currencyRef}
+            onEnterNext={withRate ? () => rateRef.current?.focus() : save}
           />
-          <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" className="h-9" />
           {withRate && (
-            <RateInput value={rate} onChange={setRate} currency={currency} className="h-9" />
+            <RateInput
+              ref={rateRef}
+              value={rate}
+              onChange={setRate}
+              currency={currency}
+              className="h-9"
+              onEnterSubmit={save}
+            />
           )}
           <div className="flex gap-1">
             <Button
@@ -1326,17 +1375,31 @@ interface AddProps {
 function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
+  const amountRef = useRef<HTMLInputElement>(null);
+  const currencyRef = useRef<HTMLButtonElement>(null);
   const submit = () => {
     const a = parseAmount(amount);
     if (a <= 0) return;
     onAdd({ kind: "opening", currency, amount: a });
     setAmount("");
+    amountRef.current?.focus();
   };
   return (
     <SectionCard title="Остаток на начало дня" icon={Wallet} tone="primary" badge={`${txs.length}`}>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
+        <AmountInput
+          ref={amountRef}
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма"
+          onEnterNext={() => currencyRef.current?.focus()}
+        />
+        <CurrencySelect
+          value={currency}
+          onChange={setCurrency}
+          triggerRef={currencyRef}
+          onEnterNext={submit}
+        />
         <Button
           onClick={submit}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
@@ -1353,6 +1416,9 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
+  const amountRef = useRef<HTMLInputElement>(null);
+  const currencyRef = useRef<HTMLButtonElement>(null);
+  const rateRef = useRef<HTMLInputElement>(null);
   const a = parseAmount(amount),
     r = parseAmount(rate);
   const kzt = a * r;
@@ -1361,6 +1427,7 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
     onAdd({ kind: "buy", currency, amount: a, rate: r });
     setAmount("");
     setRate("");
+    amountRef.current?.focus();
   };
   return (
     <SectionCard
@@ -1369,21 +1436,28 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       tone="danger"
       badge={`${txs.length}`}
     >
-      <div className="grid grid-cols-1 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+        <AmountInput
+          ref={amountRef}
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма валюты"
+          onEnterNext={() => currencyRef.current?.focus()}
+        />
         <CurrencySelect
           value={currency}
           onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
           exclude={["KZT"]}
+          triggerRef={currencyRef}
+          onEnterNext={() => rateRef.current?.focus()}
         />
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <AmountInput
-          value={amount}
-          onChange={setAmount}
-          placeholder="Сумма валюты"
-          onEnter={submit}
+        <RateInput
+          ref={rateRef}
+          value={rate}
+          onChange={setRate}
+          currency={currency}
+          onEnterSubmit={submit}
         />
-        <RateInput value={rate} onChange={setRate} currency={currency} onEnter={submit} />
         <Button onClick={submit} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
@@ -1403,6 +1477,9 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
+  const amountRef = useRef<HTMLInputElement>(null);
+  const currencyRef = useRef<HTMLButtonElement>(null);
+  const rateRef = useRef<HTMLInputElement>(null);
   const a = parseAmount(amount),
     r = parseAmount(rate);
   const kzt = a * r;
@@ -1411,6 +1488,7 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
     onAdd({ kind: "sell", currency, amount: a, rate: r });
     setAmount("");
     setRate("");
+    amountRef.current?.focus();
   };
   return (
     <SectionCard
@@ -1419,21 +1497,28 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       tone="success"
       badge={`${txs.length}`}
     >
-      <div className="grid grid-cols-1 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+        <AmountInput
+          ref={amountRef}
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма валюты"
+          onEnterNext={() => currencyRef.current?.focus()}
+        />
         <CurrencySelect
           value={currency}
           onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
           exclude={["KZT"]}
+          triggerRef={currencyRef}
+          onEnterNext={() => rateRef.current?.focus()}
         />
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <AmountInput
-          value={amount}
-          onChange={setAmount}
-          placeholder="Сумма валюты"
-          onEnter={submit}
+        <RateInput
+          ref={rateRef}
+          value={rate}
+          onChange={setRate}
+          currency={currency}
+          onEnterSubmit={submit}
         />
-        <RateInput value={rate} onChange={setRate} currency={currency} onEnter={submit} />
         <Button
           onClick={submit}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
@@ -1456,12 +1541,16 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const currencyRef = useRef<HTMLButtonElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
   const submit = () => {
     const a = parseAmount(amount);
     if (a <= 0) return;
     onAdd({ kind: "income", currency, amount: a, name: name.trim() || undefined });
     setAmount("");
     setName("");
+    nameRef.current?.focus();
   };
   return (
     <SectionCard
@@ -1471,14 +1560,26 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       badge={`${txs.length}`}
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-        <Input
+        <FlowInput
+          ref={nameRef}
           placeholder="От кого"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => onEnterSubmit(e, submit)}
+          onEnterNext={() => currencyRef.current?.focus()}
         />
-        <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
+        <CurrencySelect
+          value={currency}
+          onChange={setCurrency}
+          triggerRef={currencyRef}
+          onEnterNext={() => amountRef.current?.focus()}
+        />
+        <AmountInput
+          ref={amountRef}
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма"
+          onEnterSubmit={submit}
+        />
         <Button
           onClick={submit}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
@@ -1495,6 +1596,9 @@ function ExpenseRegularCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const currencyRef = useRef<HTMLButtonElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
   const submit = () => {
     const a = parseAmount(amount);
     if (a <= 0) return;
@@ -1507,6 +1611,7 @@ function ExpenseRegularCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
     });
     setAmount("");
     setName("");
+    nameRef.current?.focus();
   };
   return (
     <SectionCard
@@ -1516,19 +1621,31 @@ function ExpenseRegularCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       badge={`${txs.length}`}
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1.2fr_1fr_1fr_auto]">
-        <Input
+        <FlowInput
+          ref={nameRef}
           placeholder="Название расхода"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => onEnterSubmit(e, submit)}
+          onEnterNext={() => currencyRef.current?.focus()}
         />
-        <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
+        <CurrencySelect
+          value={currency}
+          onChange={setCurrency}
+          triggerRef={currencyRef}
+          onEnterNext={() => amountRef.current?.focus()}
+        />
+        <AmountInput
+          ref={amountRef}
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма"
+          onEnterSubmit={submit}
+        />
         <Button onClick={submit} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
       </div>
-      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} />
+      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName />
     </SectionCard>
   );
 }
@@ -1537,12 +1654,16 @@ function ExpensePersonCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const currencyRef = useRef<HTMLButtonElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
   const submit = () => {
     const a = parseAmount(amount);
     if (a <= 0 || !name.trim()) return;
     onAdd({ kind: "expense", currency, amount: a, name: name.trim(), expenseType: "person" });
     setAmount("");
     setName("");
+    nameRef.current?.focus();
   };
   return (
     <SectionCard
@@ -1552,14 +1673,26 @@ function ExpensePersonCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       badge={`${txs.length}`}
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-        <Input
+        <FlowInput
+          ref={nameRef}
           placeholder="Кто забрал / кому отдали"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => onEnterSubmit(e, submit)}
+          onEnterNext={() => currencyRef.current?.focus()}
         />
-        <CurrencySelect value={currency} onChange={setCurrency} />
-        <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" onEnter={submit} />
+        <CurrencySelect
+          value={currency}
+          onChange={setCurrency}
+          triggerRef={currencyRef}
+          onEnterNext={() => amountRef.current?.focus()}
+        />
+        <AmountInput
+          ref={amountRef}
+          value={amount}
+          onChange={setAmount}
+          placeholder="Сумма"
+          onEnterSubmit={submit}
+        />
         <Button onClick={submit} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>

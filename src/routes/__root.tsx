@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
@@ -73,17 +74,37 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Dimak" },
-      { name: "description", content: "Web app for currency exchange offices to track daily cash flow across 6 currencies." },
-      { name: "author", content: "Lovable" },
+      {
+        name: "description",
+        content:
+          "Web app for currency exchange offices to track daily cash flow across 6 currencies.",
+      },
+      { name: "author", content: "Dimak" },
       { property: "og:title", content: "Dimak" },
-      { property: "og:description", content: "Web app for currency exchange offices to track daily cash flow across 6 currencies." },
+      {
+        property: "og:description",
+        content:
+          "Web app for currency exchange offices to track daily cash flow across 6 currencies.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:site", content: "@Dimak" },
       { name: "twitter:title", content: "Dimak" },
-      { name: "twitter:description", content: "Web app for currency exchange offices to track daily cash flow across 6 currencies." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1b40b843-7e5f-4163-b417-5dcfc455baad/id-preview-3e3dda2b--5d75bc87-50e2-46bb-a1ef-298369ab6e9f.lovable.app-1779900187524.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1b40b843-7e5f-4163-b417-5dcfc455baad/id-preview-3e3dda2b--5d75bc87-50e2-46bb-a1ef-298369ab6e9f.lovable.app-1779900187524.png" },
+      {
+        name: "twitter:description",
+        content:
+          "Web app for currency exchange offices to track daily cash flow across 6 currencies.",
+      },
+      {
+        property: "og:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1b40b843-7e5f-4163-b417-5dcfc455baad/id-preview-3e3dda2b--5d75bc87-50e2-46bb-a1ef-298369ab6e9f.lovable.app-1779900187524.png",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1b40b843-7e5f-4163-b417-5dcfc455baad/id-preview-3e3dda2b--5d75bc87-50e2-46bb-a1ef-298369ab6e9f.lovable.app-1779900187524.png",
+      },
     ],
     links: [
       {
@@ -112,11 +133,42 @@ function RootShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+function HideLovableBadge() {
+  useEffect(() => {
+    const hide = () => {
+      document.querySelectorAll("a, button, [role='button']").forEach((el) => {
+        const text = el.textContent?.trim() ?? "";
+        if (/edit\s+(with|in)\s+lovable/i.test(text)) {
+          const node = el as HTMLElement;
+          node.style.display = "none";
+          node.style.pointerEvents = "none";
+          const parent = node.parentElement;
+          if (parent && parent.childElementCount === 1) {
+            parent.style.display = "none";
+          }
+        }
+      });
+      document.querySelectorAll('a[href*="lovable.dev"]').forEach((el) => {
+        const node = el as HTMLElement;
+        if (/edit/i.test(node.textContent ?? "")) {
+          node.style.display = "none";
+        }
+      });
+    };
+    hide();
+    const observer = new MutationObserver(hide);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+  return null;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
+      <HideLovableBadge />
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
     </QueryClientProvider>
