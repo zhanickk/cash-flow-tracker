@@ -105,6 +105,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         content:
           "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1b40b843-7e5f-4163-b417-5dcfc455baad/id-preview-3e3dda2b--5d75bc87-50e2-46bb-a1ef-298369ab6e9f.lovable.app-1779900187524.png",
       },
+      { name: "description", content: "Web app for currency exchange offices to track daily cash flow across 6 currencies." },
+      { property: "og:description", content: "Web app for currency exchange offices to track daily cash flow across 6 currencies." },
+      { name: "twitter:description", content: "Web app for currency exchange offices to track daily cash flow across 6 currencies." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/5f75f2e6-9882-43ce-8f2c-5467eb1356d1/id-preview-65ea28c9--5d75bc87-50e2-46bb-a1ef-298369ab6e9f.lovable.app-1779918931427.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/5f75f2e6-9882-43ce-8f2c-5467eb1356d1/id-preview-65ea28c9--5d75bc87-50e2-46bb-a1ef-298369ab6e9f.lovable.app-1779918931427.png" },
     ],
     links: [
       {
