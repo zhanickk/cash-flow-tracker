@@ -35,7 +35,20 @@ import {
   X,
   Plus,
   Minus,
+  FileSpreadsheet,
+  Sunrise,
+  Download,
+  FolderOpen,
 } from "lucide-react";
+import {
+  buildDailyReport,
+  buildReportWorkbook,
+  downloadExcelBuffer,
+  pickReportsDirectory,
+  saveExcelToDirectory,
+  todayDateKey,
+  type DailyReportData,
+} from "@/lib/daily-report";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -89,6 +102,7 @@ interface HistoryEntry {
 
 const STORAGE_KEY = "cash-register-v2";
 const HISTORY_KEY = "cash-register-history-v2";
+const REPORT_DONE_KEY = "cash-register-report-done-v1";
 const RESET_PIN = "0000";
 
 /* ============== Helpers ============== */
@@ -277,6 +291,22 @@ function Index() {
   const [resetOpen, setResetOpen] = useState(false);
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState("");
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportData, setReportData] = useState<DailyReportData | null>(null);
+  const [reportExcel, setReportExcel] = useState<ArrayBuffer | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportDoneToday, setReportDoneToday] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const raw = localStorage.getItem(REPORT_DONE_KEY);
+      return raw ? JSON.parse(raw).date === todayDateKey() : false;
+    } catch {
+      return false;
+    }
+  });
+  const [newDayOpen, setNewDayOpen] = useState(false);
+  const [newDayPin, setNewDayPin] = useState("");
+  const [newDayPinError, setNewDayPinError] = useState("");
 
   useEffect(() => {
     try {
@@ -342,6 +372,65 @@ function Index() {
         logHistory({ action: "delete", kind: old.kind, summary: `Удалено — ${txLabel(old)}` });
       return prev.filter((t) => t.id !== id);
     });
+  }
+
+  function markReportDone() {
+    localStorage.setItem(REPORT_DONE_KEY, JSON.stringify({ date: todayDateKey(), at: Date.now() }));
+    setReportDoneToday(true);
+  }
+
+  async function openDailyReport() {
+    setReportBusy(true);
+    try {
+      const data = buildDailyReport(transactions, totals);
+      const buffer = await buildReportWorkbook(data);
+      setReportData(data);
+      setReportExcel(buffer);
+      setReportOpen(true);
+      markReportDone();
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function handleDownloadReport() {
+    if (!reportExcel || !reportData) return;
+    setReportBusy(true);
+    try {
+      await saveExcelToDirectory(reportExcel, reportData.fileBaseName);
+      downloadExcelBuffer(reportExcel, reportData.fileBaseName);
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  function tryNewDay() {
+    if (!reportDoneToday) {
+      setNewDayPinError("Сначала сформируйте дневной отчёт за сегодня");
+      return;
+    }
+    if (newDayPin !== RESET_PIN) {
+      setNewDayPinError("Неверный PIN");
+      return;
+    }
+    const now = Date.now();
+    const openings: Transaction[] = CURRENCIES.filter((c) => totals[c.code] !== 0).map((c) => ({
+      id: crypto.randomUUID(),
+      kind: "opening" as const,
+      ts: now,
+      currency: c.code,
+      amount: totals[c.code],
+    }));
+    setTransactions(openings);
+    logHistory({
+      action: "reset",
+      summary: `НОВЫЙ ДЕНЬ — остатки перенесены (${openings.length} валют)`,
+    });
+    localStorage.removeItem(REPORT_DONE_KEY);
+    setReportDoneToday(false);
+    setNewDayOpen(false);
+    setNewDayPin("");
+    setNewDayPinError("");
   }
 
   function tryReset() {
@@ -478,12 +567,40 @@ function Index() {
           </Card>
         </div>
 
-        {/* Reset */}
-        <div className="lg:col-span-2">
+        {/* Day end actions */}
+        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-3">
+          <Button
+            size="lg"
+            className="gap-2"
+            onClick={openDailyReport}
+            disabled={reportBusy || transactions.length === 0}
+          >
+            <FileSpreadsheet className="h-5 w-5" />
+            {reportBusy ? "Формируем…" : "Дневной отчёт"}
+          </Button>
+          <Button
+            size="lg"
+            variant="secondary"
+            className="gap-2"
+            disabled={!reportDoneToday}
+            title={
+              reportDoneToday
+                ? "Перенести остатки на новый день"
+                : "Сначала сформируйте дневной отчёт"
+            }
+            onClick={() => {
+              setNewDayPin("");
+              setNewDayPinError("");
+              setNewDayOpen(true);
+            }}
+          >
+            <Sunrise className="h-5 w-5" />
+            Новый день
+          </Button>
           <Button
             variant="destructive"
             size="lg"
-            className="w-full gap-2"
+            className="gap-2"
             onClick={() => {
               setPin("");
               setPinError("");
@@ -494,6 +611,11 @@ function Index() {
             Перезапустить кассу
           </Button>
         </div>
+        {!reportDoneToday && transactions.length > 0 && (
+          <p className="text-center text-xs text-muted-foreground lg:col-span-2">
+            «Новый день» доступен после формирования дневного отчёта
+          </p>
+        )}
       </main>
 
       {/* Fixed bottom MR bar (KZT memory result) */}
@@ -514,6 +636,60 @@ function Index() {
           </div>
         </div>
       </div>
+
+      <DailyReportDialog
+        open={reportOpen}
+        onOpenChange={setReportOpen}
+        data={reportData}
+        busy={reportBusy}
+        onDownload={handleDownloadReport}
+        onPickFolder={pickReportsDirectory}
+      />
+
+      <Dialog open={newDayOpen} onOpenChange={setNewDayOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Новый день</DialogTitle>
+            <DialogDescription>
+              Текущие остатки станут «Остаток на начало дня». Операции дня будут очищены. Доступно
+              только после дневного отчёта. PIN: 0000
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="password"
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="••••"
+            value={newDayPin}
+            onChange={(e) => {
+              setNewDayPin(e.target.value.replace(/\D/g, "").slice(0, 4));
+              setNewDayPinError("");
+            }}
+            className="text-center text-2xl tracking-[0.5em]"
+            autoFocus
+          />
+          {newDayPinError && <div className="text-sm text-danger">{newDayPinError}</div>}
+          <div className="rounded-md border border-border bg-muted/50 p-3 text-xs">
+            <div className="mb-1 font-medium">Остатки перейдут в новый день:</div>
+            <div className="flex flex-wrap gap-2">
+              {CURRENCIES.filter((c) => totals[c.code] !== 0).map((c) => (
+                <span key={c.code} className="tabular-nums">
+                  {c.short}: {fmt(totals[c.code])}
+                </span>
+              ))}
+              {CURRENCIES.every((c) => totals[c.code] === 0) && (
+                <span className="text-muted-foreground">Все остатки нулевые</span>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewDayOpen(false)}>
+              Отмена
+            </Button>
+            <Button onClick={tryNewDay}>Открыть новый день</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Reset PIN dialog */}
       <Dialog open={resetOpen} onOpenChange={setResetOpen}>
@@ -549,6 +725,182 @@ function Index() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/* ============== Report dialog ============== */
+
+function DailyReportDialog({
+  open,
+  onOpenChange,
+  data,
+  busy,
+  onDownload,
+  onPickFolder,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  data: DailyReportData | null;
+  busy: boolean;
+  onDownload: () => void;
+  onPickFolder: () => Promise<FileSystemDirectoryHandle | null>;
+}) {
+  if (!data) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[min(90vh,720px)] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b border-border px-4 py-3">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <FileSpreadsheet className="h-5 w-5 text-primary" />
+            {data.fileBaseName}
+          </DialogTitle>
+          <DialogDescription>{data.dateTitle}</DialogDescription>
+        </DialogHeader>
+
+        <ScrollArea className="flex-1 px-4 py-3">
+          <div className="space-y-4">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="rounded-lg border border-success/30 bg-success-soft p-3">
+                <div className="text-xs text-muted-foreground">Маржа обмена (KZT)</div>
+                <div className="text-lg font-bold tabular-nums text-success">
+                  {fmt(data.totalFxMarginKzt)} ₸
+                </div>
+              </div>
+              <div
+                className={cn(
+                  "rounded-lg border p-3",
+                  data.netProfitKzt >= 0
+                    ? "border-success/30 bg-success-soft"
+                    : "border-danger/30 bg-danger-soft",
+                )}
+              >
+                <div className="text-xs text-muted-foreground">Чистая прибыль (KZT)</div>
+                <div
+                  className={cn(
+                    "text-lg font-bold tabular-nums",
+                    data.netProfitKzt >= 0 ? "text-success" : "text-danger",
+                  )}
+                >
+                  {fmt(data.netProfitKzt)} ₸
+                </div>
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  маржа + приходы KZT − обычные расходы KZT
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="rounded-md bg-muted/60 p-2">
+                <div className="text-muted-foreground">Приходы KZT</div>
+                <div className="font-semibold tabular-nums">{fmt(data.incomeKzt)}</div>
+              </div>
+              <div className="rounded-md bg-muted/60 p-2">
+                <div className="text-muted-foreground">Расходы KZT</div>
+                <div className="font-semibold tabular-nums text-danger">
+                  {fmt(data.regularExpenseKzt)}
+                </div>
+              </div>
+              <div className="rounded-md bg-muted/60 p-2">
+                <div className="text-muted-foreground">Выдачи KZT</div>
+                <div className="font-semibold tabular-nums">{fmt(data.personExpenseKzt)}</div>
+              </div>
+            </div>
+
+            {data.fxRows.some((r) => r.boughtAmount > 0 || r.soldAmount > 0) && (
+              <div>
+                <h4 className="mb-2 text-sm font-semibold">Купля / продажа</h4>
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full text-xs">
+                    <thead className="bg-accent">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left">Вал.</th>
+                        <th className="px-2 py-1.5 text-right">Куплено</th>
+                        <th className="px-2 py-1.5 text-right">Продано</th>
+                        <th className="px-2 py-1.5 text-right">Маржа ₸</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.fxRows
+                        .filter((r) => r.boughtAmount > 0 || r.soldAmount > 0)
+                        .map((r) => (
+                          <tr key={r.currency} className="border-t border-border">
+                            <td className="px-2 py-1 font-medium">{r.currency}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">
+                              {fmt(r.boughtAmount)} @ {r.avgBuyRate ? fmt(r.avgBuyRate, 3) : "—"}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums">
+                              {fmt(r.soldAmount)} @ {r.avgSellRate ? fmt(r.avgSellRate, 3) : "—"}
+                            </td>
+                            <td
+                              className={cn(
+                                "px-2 py-1 text-right font-semibold tabular-nums",
+                                r.marginKzt >= 0 ? "text-success" : "text-danger",
+                              )}
+                            >
+                              {fmt(r.marginKzt)}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <h4 className="mb-2 text-sm font-semibold">Операции ({data.rows.length})</h4>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-border">
+                <table className="w-full text-[11px]">
+                  <thead className="sticky top-0 bg-card">
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="px-2 py-1 text-left">Время</th>
+                      <th className="px-2 py-1 text-left">Тип</th>
+                      <th className="px-2 py-1 text-right">Сумма</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.rows.map((row, i) => (
+                      <tr key={i} className="border-b border-border/60">
+                        <td className="px-2 py-1 whitespace-nowrap text-muted-foreground">
+                          {row.time.split(",")[1]?.trim() ?? row.time}
+                        </td>
+                        <td className="px-2 py-1">{row.kind}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">
+                          {fmt(row.amount)} {row.currency}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </ScrollArea>
+
+        <DialogFooter className="border-t border-border px-4 py-3 sm:justify-between">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            onClick={() => onPickFolder()}
+          >
+            <FolderOpen className="h-4 w-4" />
+            Папка для отчётов
+          </Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Закрыть
+            </Button>
+            <Button type="button" className="gap-1" disabled={busy} onClick={onDownload}>
+              <Download className="h-4 w-4" />
+              {busy ? "Сохраняем…" : "Скачать Excel"}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
