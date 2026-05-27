@@ -125,11 +125,86 @@ function formatInputValue(s: string): string {
   return groupedInt === "0" && intRaw === "" ? "" : groupedInt;
 }
 
-function formatRateInput(s: string): string {
-  const digits = s.replace(/\D/g, "").slice(0, 6);
+type RateFormatKind = "usd_eur" | "cny" | "rub" | "gold";
+
+function rateFormatKind(currency: Currency): RateFormatKind {
+  switch (currency) {
+    case "USD":
+    case "EUR":
+      return "usd_eur";
+    case "CNY":
+      return "cny";
+    case "RUB":
+      return "rub";
+    case "GOLD":
+      return "gold";
+    default:
+      return "usd_eur";
+  }
+}
+
+/** USD/EUR: 470 → 470.4 → 470.45; CNY: xx.xxx; RUB: x.xxx; GOLD: без точки */
+function formatRateInput(s: string, currency: Currency): string {
+  const digits = s.replace(/\D/g, "");
   if (!digits) return "";
-  if (digits.length <= 3) return digits;
-  return `${digits.slice(0, -3)}.${digits.slice(-3)}`;
+
+  const kind = rateFormatKind(currency);
+  if (kind === "gold") return digits;
+
+  if (kind === "usd_eur") {
+    const minInt = 3;
+    const fracMax = 2;
+    if (digits.length <= minInt) return digits;
+    const fracLen = Math.min(fracMax, digits.length - minInt);
+    const intPart = digits.slice(0, digits.length - fracLen);
+    const fracPart = digits.slice(-fracLen);
+    return `${intPart}.${fracPart}`;
+  }
+
+  const intMax = kind === "cny" ? 2 : 1;
+  const fracMax = 3;
+  const d = digits.slice(0, intMax + fracMax);
+  if (d.length <= intMax) return d;
+  const fracLen = Math.min(fracMax, d.length - intMax);
+  const intPart = d.slice(0, d.length - fracLen);
+  const fracPart = d.slice(-fracLen);
+  return `${intPart}.${fracPart}`;
+}
+
+function rateToDigits(rate: number, currency: Currency): string {
+  if (currency === "GOLD") return String(Math.round(rate));
+  const [intPart = "0", fracPart = ""] = rate.toString().split(".");
+  const frac = fracPart.replace(/\D/g, "");
+  const kind = rateFormatKind(currency);
+  if (kind === "usd_eur") return intPart + frac.slice(0, 2);
+  if (kind === "cny") return intPart.slice(0, 2) + frac.slice(0, 3);
+  if (kind === "rub") return intPart.slice(0, 1) + frac.slice(0, 3);
+  return intPart + frac;
+}
+
+function ratePlaceholder(currency: Currency): string {
+  switch (rateFormatKind(currency)) {
+    case "usd_eur":
+      return "470.00";
+    case "cny":
+      return "47.000";
+    case "rub":
+      return "4.000";
+    case "gold":
+      return "Курс";
+  }
+}
+
+function onCurrencyChange(
+  next: Currency,
+  setCurrency: (c: Currency) => void,
+  setRate: (fn: (prev: string) => string) => void,
+) {
+  setCurrency(next);
+  setRate((prev) => {
+    const d = prev.replace(/\D/g, "");
+    return d ? formatRateInput(d, next) : "";
+  });
 }
 
 function todayStr() {
@@ -554,20 +629,20 @@ function AmountInput({
 function RateInput({
   value,
   onChange,
-  placeholder,
+  currency,
   className,
 }: {
   value: string;
   onChange: (v: string) => void;
-  placeholder?: string;
+  currency: Currency;
   className?: string;
 }) {
   return (
     <Input
       inputMode="numeric"
       value={value}
-      placeholder={placeholder ?? "xxx.xxx"}
-      onChange={(e) => onChange(formatRateInput(e.target.value))}
+      placeholder={ratePlaceholder(currency)}
+      onChange={(e) => onChange(formatRateInput(e.target.value, currency))}
       className={cn("tabular-nums", className)}
     />
   );
@@ -637,7 +712,7 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowPr
   const [currency, setCurrency] = useState<Currency>(tx.currency);
   const [amount, setAmount] = useState(fmt(tx.amount));
   const [rate, setRate] = useState(
-    tx.rate ? formatRateInput(String(Math.round(tx.rate * 1000))) : "",
+    tx.rate ? formatRateInput(rateToDigits(tx.rate, tx.currency), tx.currency) : "",
   );
 
   const isPlus = ["opening", "income", "sell"].includes(tx.kind);
@@ -670,17 +745,12 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowPr
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <CurrencySelect
             value={currency}
-            onChange={setCurrency}
+            onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
             exclude={excludeKzt ? ["KZT"] : []}
           />
           <AmountInput value={amount} onChange={setAmount} placeholder="Сумма" className="h-9" />
           {withRate && (
-            <RateInput
-              value={rate}
-              onChange={setRate}
-              placeholder="Курс (xxx.xxx)"
-              className="h-9"
-            />
+            <RateInput value={rate} onChange={setRate} currency={currency} className="h-9" />
           )}
           <div className="flex gap-1">
             <Button
@@ -816,11 +886,15 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       badge={`${txs.length}`}
     >
       <div className="grid grid-cols-1 gap-2">
-        <CurrencySelect value={currency} onChange={setCurrency} exclude={["KZT"]} />
+        <CurrencySelect
+          value={currency}
+          onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
+          exclude={["KZT"]}
+        />
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
         <AmountInput value={amount} onChange={setAmount} placeholder="Сумма валюты" />
-        <RateInput value={rate} onChange={setRate} placeholder="Курс (xxx.xxx)" />
+        <RateInput value={rate} onChange={setRate} currency={currency} />
         <Button onClick={submit} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
@@ -857,11 +931,15 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       badge={`${txs.length}`}
     >
       <div className="grid grid-cols-1 gap-2">
-        <CurrencySelect value={currency} onChange={setCurrency} exclude={["KZT"]} />
+        <CurrencySelect
+          value={currency}
+          onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
+          exclude={["KZT"]}
+        />
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
         <AmountInput value={amount} onChange={setAmount} placeholder="Сумма валюты" />
-        <RateInput value={rate} onChange={setRate} placeholder="Курс (xxx.xxx)" />
+        <RateInput value={rate} onChange={setRate} currency={currency} />
         <Button
           onClick={submit}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
