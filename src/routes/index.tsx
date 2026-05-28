@@ -67,12 +67,13 @@ export const Route = createFileRoute("/")({
 
 /* ============== Types ============== */
 
-type Currency = "USD" | "EUR" | "RUB" | "CNY" | "GOLD" | "KZT";
+type Currency = "USD" | "EUR" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
 
 const CURRENCIES: { code: Currency; label: string; short: string; symbol: string }[] = [
   { code: "USD", label: "Доллар (USD)", short: "USD", symbol: "$" },
   { code: "EUR", label: "Евро (EUR)", short: "EUR", symbol: "€" },
   { code: "RUB", label: "Рубль (RUB)", short: "RUB", symbol: "₽" },
+  { code: "KGS", label: "Сом (KGS)", short: "KGS", symbol: "с" },
   { code: "CNY", label: "Юань (CNY)", short: "CNY", symbol: "¥" },
   { code: "GOLD", label: "Золото (гр)", short: "Gold", symbol: "Au" },
   { code: "KZT", label: "Тенге (KZT)", short: "KZT", symbol: "₸" },
@@ -150,7 +151,7 @@ function formatRateInput(s: string, currency: Currency): string {
   const digits = s.replace(/\D/g, "");
   if (!digits) return "";
   if (currency === "GOLD" || currency === "KZT") return digits;
-  const minInt = currency === "CNY" ? 2 : currency === "RUB" ? 1 : 3;
+  const minInt = currency === "CNY" ? 2 : currency === "RUB" || currency === "KGS" ? 1 : 3;
   const fracMax = 4;
   if (digits.length <= minInt) return digits;
   const fracLen = Math.min(fracMax, digits.length - minInt);
@@ -163,13 +164,13 @@ function rateToDigits(rate: number, currency: Currency): string {
   if (currency === "GOLD" || currency === "KZT") return String(Math.round(rate));
   const [intPart = "0", fracPart = ""] = rate.toString().split(".");
   const frac = fracPart.replace(/\D/g, "");
-  const maxInt = currency === "CNY" ? 2 : currency === "RUB" ? 1 : 3;
+  const maxInt = currency === "CNY" ? 2 : currency === "RUB" || currency === "KGS" ? 1 : 3;
   return intPart.slice(0, maxInt) + frac.slice(0, 4);
 }
 
 function ratePlaceholder(currency: Currency): string {
   if (currency === "GOLD") return "470";
-  if (currency === "RUB") return "4.0000";
+  if (currency === "RUB" || currency === "KGS") return "4.0000";
   if (currency === "CNY") return "47.0000";
   if (currency === "USD" || currency === "EUR") return "470.0000";
   return "Курс";
@@ -179,6 +180,7 @@ const CURRENCY_FLAG: Record<Currency, string> = {
   USD: "🇺🇸",
   EUR: "🇪🇺",
   RUB: "🇷🇺",
+  KGS: "🇰🇬",
   CNY: "🇨🇳",
   GOLD: "🏅",
   KZT: "🇰🇿",
@@ -307,7 +309,7 @@ function Index() {
   }, [history]);
 
   const totals = useMemo(() => {
-    const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, RUB: 0, CNY: 0, GOLD: 0 };
+    const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, RUB: 0, KGS: 0, CNY: 0, GOLD: 0 };
     for (const tx of transactions) {
       const d = txDeltas(tx);
       for (const [k, v] of Object.entries(d)) t[k as Currency] += v || 0;
