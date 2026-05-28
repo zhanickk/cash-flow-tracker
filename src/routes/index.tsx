@@ -110,13 +110,21 @@ const RESET_PIN = "0000";
 
 function fmt(n: number, frac = 2) {
   if (!isFinite(n)) return "0";
-  return n.toLocaleString("ru-RU", {
+  const v = n.toLocaleString("en-US", {
     minimumFractionDigits: 0,
     maximumFractionDigits: frac,
   });
+  return v.replace(/,/g, "_").replace(/\./g, ",").replace(/_/g, ".");
 }
 
 function parseAmount(s: string): number {
+  if (!s) return 0;
+  const cleaned = s.replace(/\s/g, "").replace(/\./g, "").replace(/,/g, ".");
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
+function parseRate(s: string): number {
   if (!s) return 0;
   const cleaned = s.replace(/\s/g, "").replace(/,/g, ".");
   const parts = cleaned.split(".");
@@ -127,25 +135,22 @@ function parseAmount(s: string): number {
 }
 
 function formatInputValue(s: string): string {
-  const raw = s
-    .replace(/\s/g, "")
-    .replace(/,/g, ".")
-    .replace(/[^\d.]/g, "");
-  const firstDot = raw.indexOf(".");
-  const intRaw = firstDot >= 0 ? raw.slice(0, firstDot) : raw;
-  const fracRaw = firstDot >= 0 ? raw.slice(firstDot + 1).replace(/\./g, "") : "";
+  const raw = s.replace(/\s/g, "").replace(/[^\d,]/g, "");
+  const firstComma = raw.indexOf(",");
+  const intRaw = firstComma >= 0 ? raw.slice(0, firstComma) : raw;
+  const fracRaw = firstComma >= 0 ? raw.slice(firstComma + 1).replace(/,/g, "") : "";
   const intNormalized = intRaw.replace(/^0+(?=\d)/, "");
-  const groupedInt = (intNormalized || "0").replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  if (firstDot >= 0) return `${groupedInt}.${fracRaw}`;
+  const groupedInt = (intNormalized || "0").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  if (firstComma >= 0) return `${groupedInt},${fracRaw}`;
   return groupedInt === "0" && intRaw === "" ? "" : groupedInt;
 }
 
-/** For all FX: 470 -> 470.1 -> 470.1234 */
+/** Currency specific masks for FX rates. */
 function formatRateInput(s: string, currency: Currency): string {
   const digits = s.replace(/\D/g, "");
   if (!digits) return "";
-  if (currency === "KZT") return digits;
-  const minInt = 3;
+  if (currency === "GOLD" || currency === "KZT") return digits;
+  const minInt = currency === "CNY" ? 2 : currency === "RUB" ? 1 : 3;
   const fracMax = 4;
   if (digits.length <= minInt) return digits;
   const fracLen = Math.min(fracMax, digits.length - minInt);
@@ -155,15 +160,19 @@ function formatRateInput(s: string, currency: Currency): string {
 }
 
 function rateToDigits(rate: number, currency: Currency): string {
-  if (currency === "KZT") return String(Math.round(rate));
+  if (currency === "GOLD" || currency === "KZT") return String(Math.round(rate));
   const [intPart = "0", fracPart = ""] = rate.toString().split(".");
   const frac = fracPart.replace(/\D/g, "");
-  return intPart + frac.slice(0, 4);
+  const maxInt = currency === "CNY" ? 2 : currency === "RUB" ? 1 : 3;
+  return intPart.slice(0, maxInt) + frac.slice(0, 4);
 }
 
 function ratePlaceholder(currency: Currency): string {
-  if (currency === "KZT") return "Курс";
-  return "470.0000";
+  if (currency === "GOLD") return "470";
+  if (currency === "RUB") return "4.0000";
+  if (currency === "CNY") return "47.0000";
+  if (currency === "USD" || currency === "EUR") return "470.0000";
+  return "Курс";
 }
 
 const CURRENCY_FLAG: Record<Currency, string> = {
@@ -1234,7 +1243,7 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowPr
 
   const save = () => {
     const a = parseAmount(amount);
-    const r = parseAmount(rate);
+    const r = parseRate(rate);
     if (a <= 0) return;
     if (withRate && r <= 0) return;
     onUpdate(tx.id, {
@@ -1420,7 +1429,7 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const currencyRef = useRef<HTMLButtonElement>(null);
   const rateRef = useRef<HTMLInputElement>(null);
   const a = parseAmount(amount),
-    r = parseAmount(rate);
+    r = parseRate(rate);
   const kzt = a * r;
   const submit = () => {
     if (a <= 0 || r <= 0) return;
@@ -1481,7 +1490,7 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const currencyRef = useRef<HTMLButtonElement>(null);
   const rateRef = useRef<HTMLInputElement>(null);
   const a = parseAmount(amount),
-    r = parseAmount(rate);
+    r = parseRate(rate);
   const kzt = a * r;
   const submit = () => {
     if (a <= 0 || r <= 0) return;
