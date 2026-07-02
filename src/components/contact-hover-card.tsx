@@ -1,6 +1,6 @@
 import { HoverCardContent } from "@/components/ui/hover-card";
 import { cn } from "@/lib/utils";
-import { fmtAmount, fmtUsd, useContactLast5 } from "@/lib/contacts";
+import { fmtAmount, fmtDateTime, fmtUsd, useContactLast5 } from "@/lib/contacts";
 
 function balanceTone(v: number) {
   if (v > 0) return "text-success";
@@ -71,9 +71,7 @@ export function ContactBalanceHoverCard({
         <div className="flex flex-col gap-1.5">
           {(last5 ?? []).map((t) => (
             <div key={t.id} className="flex items-center justify-between gap-3 text-xs leading-none">
-              <span className="text-muted-foreground">
-                {new Date(t.occurred_at).toLocaleDateString("ru-RU")}
-              </span>
+              <span className="text-muted-foreground">{fmtDateTime(t.occurred_at)}</span>
               <span className={cn("font-medium tabular-nums", balanceTone(Number(t.amount)))}>
                 {t.currency === "KZT" ? fmtAmount(Number(t.amount)) + " ₸" : fmtUsd(Number(t.amount))}
               </span>

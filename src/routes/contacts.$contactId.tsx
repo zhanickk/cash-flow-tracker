@@ -14,12 +14,27 @@ import { ArrowLeft, Plus, RotateCcw } from "lucide-react";
 import {
   effectiveRate,
   fmtAmount,
+  fmtDateTime,
   fmtUsd,
   useAddContactTransaction,
   useContactDetail,
+  useDeleteContactTransaction,
   useGlobalRate,
   useUpdateContactRate,
 } from "@/lib/contacts";
+import { Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button";
 
 export const Route = createFileRoute("/contacts/$contactId")({
   head: () => ({
@@ -47,6 +62,7 @@ function ContactDetailPage() {
   const { data: globalRate = 0 } = useGlobalRate();
   const updateRate = useUpdateContactRate();
   const addTx = useAddContactTransaction();
+  const deleteTx = useDeleteContactTransaction();
 
   const [rateDraft, setRateDraft] = useState<string | null>(null);
   const [currency, setCurrency] = useState<"KZT" | "USD">("KZT");
@@ -182,20 +198,55 @@ function ContactDetailPage() {
             <p className="p-4 text-center text-sm text-muted-foreground">Операций пока нет</p>
           )}
           {transactions.map((t) => (
-            <div key={t.id} className="flex items-center justify-between gap-3 px-3 py-2">
+            <div
+              key={t.id}
+              className="group flex items-center justify-between gap-3 px-3 py-2"
+            >
               <div className="min-w-0">
-                <div className="text-xs text-muted-foreground">
-                  {new Date(t.occurred_at).toLocaleDateString("ru-RU")}
-                </div>
+                <div className="text-xs text-muted-foreground">{fmtDateTime(t.occurred_at)}</div>
                 {t.note && <div className="truncate text-xs text-muted-foreground">{t.note}</div>}
               </div>
-              <div
-                className={cn(
-                  "shrink-0 text-sm font-medium tabular-nums",
-                  balanceTone(Number(t.amount)),
-                )}
-              >
-                {t.currency === "KZT" ? fmtAmount(Number(t.amount)) + " ₸" : fmtUsd(Number(t.amount))}
+              <div className="flex shrink-0 items-center gap-2">
+                <div
+                  className={cn(
+                    "text-sm font-medium tabular-nums",
+                    balanceTone(Number(t.amount)),
+                  )}
+                >
+                  {t.currency === "KZT" ? fmtAmount(Number(t.amount)) + " ₸" : fmtUsd(Number(t.amount))}
+                </div>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 shrink-0 text-danger opacity-60 hover:text-danger group-hover:opacity-100"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Удалить операцию?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {fmtDateTime(t.occurred_at)} ·{" "}
+                        {t.currency === "KZT"
+                          ? fmtAmount(Number(t.amount)) + " ₸"
+                          : fmtUsd(Number(t.amount))}
+                        {t.note ? ` · ${t.note}` : ""}. Действие необратимо.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Отмена</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => deleteTx.mutate(t.id)}
+                        className={buttonVariants({ variant: "destructive" })}
+                      >
+                        Удалить
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             </div>
           ))}

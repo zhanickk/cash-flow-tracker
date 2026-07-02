@@ -156,20 +156,48 @@ export function useAddContactTransaction() {
       currency: "KZT" | "USD";
       amount: number;
       note?: string;
-    }) => {
-      const { error } = await supabase.from("contact_transactions").insert({
-        contact_id: input.contactId,
-        currency: input.currency,
-        amount: input.amount,
-        note: input.note ?? null,
-        source: "app",
-      });
+    }): Promise<{ id: string }> => {
+      const { data, error } = await supabase
+        .from("contact_transactions")
+        .insert({
+          contact_id: input.contactId,
+          currency: input.currency,
+          amount: input.amount,
+          note: input.note ?? null,
+          source: "app",
+        })
+        .select("id")
+        .single();
       if (error) throw error;
+      return data;
     },
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["contact-detail", vars.contactId] });
       qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
       qc.invalidateQueries({ queryKey: ["contact-last5", vars.contactId] });
+    },
+  });
+}
+
+export function useDeleteContactTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<{ contact_id: string | null }> => {
+      const { data, error } = await supabase
+        .from("contact_transactions")
+        .delete()
+        .eq("id", id)
+        .select("contact_id")
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data?.contact_id) {
+        qc.invalidateQueries({ queryKey: ["contact-detail", data.contact_id] });
+        qc.invalidateQueries({ queryKey: ["contact-last5", data.contact_id] });
+      }
+      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
     },
   });
 }
@@ -213,6 +241,11 @@ export async function findOrCreateContactByName(name: string): Promise<string> {
 
 export function effectiveRate(contact: { custom_rate: number | null }, globalRate: number) {
   return contact.custom_rate ?? globalRate;
+}
+
+export function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString("ru-RU")} ${d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 export function fmtAmount(n: number) {

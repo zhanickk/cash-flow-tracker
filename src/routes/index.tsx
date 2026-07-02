@@ -19,6 +19,18 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   Wallet,
@@ -59,6 +71,7 @@ import {
   findOrCreateContactByName,
   useAddContactTransaction,
   useContactsWithBalances,
+  useDeleteContactTransaction,
   useGlobalRate,
   type ContactWithBalance,
 } from "@/lib/contacts";
@@ -104,6 +117,7 @@ interface Transaction {
   amount: number;
   rate?: number;
   expenseType?: "regular" | "person";
+  contactTxId?: string;
 }
 
 interface HistoryEntry {
@@ -307,6 +321,7 @@ function Index() {
 
   const { data: contactsWithBalances = [] } = useContactsWithBalances();
   const { data: globalRate = 0 } = useGlobalRate();
+  const deleteContactTx = useDeleteContactTransaction();
   const contactMap = useMemo(() => {
     const m = new Map<string, ContactWithBalance>();
     for (const c of contactsWithBalances) m.set(c.name.trim().toLowerCase(), c);
@@ -366,8 +381,8 @@ function Index() {
     setHistory((prev) => [...prev, { ...entry, id: crypto.randomUUID(), ts: Date.now() }]);
   }
 
-  function addTx(tx: Omit<Transaction, "id" | "ts">) {
-    const full: Transaction = { ...tx, id: crypto.randomUUID(), ts: Date.now() };
+  function addTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
+    const full: Transaction = { ...tx, id: tx.id ?? crypto.randomUUID(), ts: Date.now() };
     setTransactions((p) => [...p, full]);
     logHistory({ action: "add", kind: full.kind, summary: `Добавлено — ${txLabel(full)}` });
   }
@@ -398,8 +413,12 @@ function Index() {
   function deleteTx(id: string) {
     setTransactions((prev) => {
       const old = prev.find((t) => t.id === id);
-      if (old)
+      if (old) {
         logHistory({ action: "delete", kind: old.kind, summary: `Удалено — ${txLabel(old)}` });
+        if (old.contactTxId) {
+          deleteContactTx.mutate(old.contactTxId);
+        }
+      }
       return prev.filter((t) => t.id !== id);
     });
   }
@@ -1393,14 +1412,34 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contact
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditing(true)}>
           <Pencil className="h-3.5 w-3.5" />
         </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-7 w-7 text-danger hover:text-danger"
-          onClick={() => onDelete(tx.id)}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button size="icon" variant="ghost" className="h-7 w-7 text-danger hover:text-danger">
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Удалить операцию?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {txLabel(tx)}
+                {tx.expenseType === "person"
+                  ? " — запись также будет удалена из истории контакта."
+                  : ""}{" "}
+                Действие необратимо.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => onDelete(tx.id)}
+                className={buttonVariants({ variant: "destructive" })}
+              >
+                Удалить
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </li>
   );
@@ -1429,7 +1468,7 @@ function TxList({ txs, ...props }: { txs: Transaction[] } & Omit<RowProps, "tx">
 
 interface AddProps {
   txs: Transaction[];
-  onAdd: (tx: Omit<Transaction, "id" | "ts">) => void;
+  onAdd: (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => void;
   onUpdate: (id: string, patch: Partial<Transaction>) => void;
   onDelete: (id: string) => void;
 }
@@ -1702,7 +1741,9 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap, glob
     const trimmed = name.trim();
     if (a <= 0) return;
     if (!freeMode && !trimmed) return;
+    const localId = crypto.randomUUID();
     onAdd({
+      id: localId,
       kind: "income",
       currency,
       amount: a,
@@ -1712,7 +1753,13 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap, glob
     if (!freeMode && trimmed && (currency === "KZT" || currency === "USD")) {
       try {
         const contactId = await findOrCreateContactByName(trimmed);
-        addContactTx.mutate({ contactId, currency, amount: a, note: "Касса: приход" });
+        const row = await addContactTx.mutateAsync({
+          contactId,
+          currency,
+          amount: a,
+          note: "Касса: приход",
+        });
+        onUpdate(localId, { contactTxId: row.id });
       } catch {
         // локальная запись уже сохранена, синхронизацию с контактом можно повторить позже
       }
@@ -1800,7 +1847,9 @@ function ExpenseCombinedCard({
     const trimmed = name.trim();
     if (a <= 0) return;
     if (!freeMode && !trimmed) return;
+    const localId = crypto.randomUUID();
     onAdd({
+      id: localId,
       kind: "expense",
       currency,
       amount: a,
@@ -1810,7 +1859,13 @@ function ExpenseCombinedCard({
     if (!freeMode && trimmed && (currency === "KZT" || currency === "USD")) {
       try {
         const contactId = await findOrCreateContactByName(trimmed);
-        addContactTx.mutate({ contactId, currency, amount: -a, note: "Касса: расход" });
+        const row = await addContactTx.mutateAsync({
+          contactId,
+          currency,
+          amount: -a,
+          note: "Касса: расход",
+        });
+        onUpdate(localId, { contactTxId: row.id });
       } catch {
         // локальная запись уже сохранена, синхронизацию с контактом можно повторить позже
       }
