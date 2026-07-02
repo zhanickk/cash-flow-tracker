@@ -56,6 +56,8 @@ import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
 import {
   effectiveRate,
+  findOrCreateContactByName,
+  useAddContactTransaction,
   useContactsWithBalances,
   useGlobalRate,
   type ContactWithBalance,
@@ -343,7 +345,7 @@ function Index() {
     for (const tx of transactions) {
       const person = tx.name?.trim();
       if (!person) continue;
-      const isIn = tx.kind === "income";
+      const isIn = tx.kind === "income" && tx.expenseType !== "regular";
       const isOut = tx.kind === "expense" && tx.expenseType === "person";
       if (!isIn && !isOut) continue;
       const valueKzt = tx.currency === "KZT" ? tx.amount : 0;
@@ -505,45 +507,44 @@ function Index() {
 
       {/* SECTION 2 — Main grid */}
       <main className="mx-auto grid max-w-7xl gap-4 p-3 sm:p-4 lg:grid-cols-2">
-        <div className="grid gap-4">
+        <div className="lg:col-span-2">
           <OpeningCard
             txs={transactions.filter((t) => t.kind === "opening")}
             onAdd={addTx}
             onUpdate={updateTx}
             onDelete={deleteTx}
           />
-          <BuyCard
-            txs={transactions.filter((t) => t.kind === "buy")}
-            onAdd={addTx}
-            onUpdate={updateTx}
-            onDelete={deleteTx}
-          />
         </div>
-        <div className="grid gap-4">
-          <SellCard
-            txs={transactions.filter((t) => t.kind === "sell")}
-            onAdd={addTx}
-            onUpdate={updateTx}
-            onDelete={deleteTx}
-          />
-          <IncomeCard
-            txs={transactions.filter((t) => t.kind === "income")}
-            onAdd={addTx}
-            onUpdate={updateTx}
-            onDelete={deleteTx}
-          />
-        </div>
-        <div className="lg:col-span-2">
-          <ExpenseCombinedCard
-            txs={transactions.filter((t) => t.kind === "expense")}
-            onAdd={addTx}
-            onUpdate={updateTx}
-            onDelete={deleteTx}
-            contacts={contactsWithBalances}
-            contactMap={contactMap}
-            globalRate={globalRate}
-          />
-        </div>
+        <BuyCard
+          txs={transactions.filter((t) => t.kind === "buy")}
+          onAdd={addTx}
+          onUpdate={updateTx}
+          onDelete={deleteTx}
+        />
+        <SellCard
+          txs={transactions.filter((t) => t.kind === "sell")}
+          onAdd={addTx}
+          onUpdate={updateTx}
+          onDelete={deleteTx}
+        />
+        <IncomeCard
+          txs={transactions.filter((t) => t.kind === "income")}
+          onAdd={addTx}
+          onUpdate={updateTx}
+          onDelete={deleteTx}
+          contacts={contactsWithBalances}
+          contactMap={contactMap}
+          globalRate={globalRate}
+        />
+        <ExpenseCombinedCard
+          txs={transactions.filter((t) => t.kind === "expense")}
+          onAdd={addTx}
+          onUpdate={updateTx}
+          onDelete={deleteTx}
+          contacts={contactsWithBalances}
+          contactMap={contactMap}
+          globalRate={globalRate}
+        />
 
         {/* History */}
         <div className="lg:col-span-2">
@@ -1362,7 +1363,7 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contact
               return (
                 <HoverCard openDelay={150} closeDelay={80}>
                   <HoverCardTrigger asChild>
-                    <span className="cursor-default font-medium underline decoration-dotted underline-offset-2">
+                    <span className="cursor-default font-medium text-primary underline decoration-1 underline-offset-2">
                       {tx.name}
                     </span>
                   </HoverCardTrigger>
@@ -1598,21 +1599,129 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   );
 }
 
-function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
+function ContactAutocompleteField({
+  contacts,
+  name,
+  onNameChange,
+  freeMode,
+  onToggleFreeMode,
+  linkedPlaceholder,
+  freePlaceholder,
+  nameRef,
+  onEnterNext,
+}: {
+  contacts: ContactWithBalance[];
+  name: string;
+  onNameChange: (v: string) => void;
+  freeMode: boolean;
+  onToggleFreeMode: () => void;
+  linkedPlaceholder: string;
+  freePlaceholder: string;
+  nameRef: React.RefObject<HTMLInputElement | null>;
+  onEnterNext?: () => void;
+}) {
+  const [showDropdown, setShowDropdown] = useState(false);
+  const blurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const suggestions = useMemo(() => {
+    const q = name.trim().toLowerCase();
+    if (!q || freeMode) return [];
+    const starts = contacts.filter((c) => c.name.toLowerCase().startsWith(q));
+    const list =
+      starts.length > 0 ? starts : contacts.filter((c) => c.name.toLowerCase().includes(q));
+    return list.slice(0, 6);
+  }, [contacts, name, freeMode]);
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={freeMode ? "Режим: заметка" : "Режим: контакт"}
+        title={freeMode ? "Заметка (без привязки к контакту)" : "Привязка к контакту"}
+        onClick={onToggleFreeMode}
+        className="flex h-9 w-9 shrink-0 items-center justify-center justify-self-center rounded-md border border-input text-muted-foreground hover:text-foreground sm:justify-self-auto"
+      >
+        {freeMode ? <Link2Off className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+      </button>
+      <div className="relative">
+        <FlowInput
+          ref={nameRef}
+          placeholder={freeMode ? freePlaceholder : linkedPlaceholder}
+          value={name}
+          onChange={(e) => {
+            onNameChange(e.target.value);
+            setShowDropdown(true);
+          }}
+          onFocus={() => setShowDropdown(true)}
+          onBlur={() => {
+            blurTimeout.current = setTimeout(() => setShowDropdown(false), 150);
+          }}
+          onEnterNext={onEnterNext}
+        />
+        {showDropdown && suggestions.length > 0 && (
+          <div className="absolute left-0 top-full z-20 mt-1 w-56 rounded-md border border-border bg-popover shadow-md">
+            {suggestions.map((c) => (
+              <div
+                key={c.id}
+                className="cursor-pointer px-3 py-1.5 text-sm hover:bg-muted"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  if (blurTimeout.current) clearTimeout(blurTimeout.current);
+                  onNameChange(c.name);
+                  setShowDropdown(false);
+                }}
+              >
+                {c.name}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+interface ContactAddProps extends AddProps {
+  contacts: ContactWithBalance[];
+  contactMap: Map<string, ContactWithBalance>;
+  globalRate: number;
+}
+
+function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap, globalRate }: ContactAddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
+  const [freeMode, setFreeMode] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
-  const submit = () => {
+  const addContactTx = useAddContactTransaction();
+
+  const submit = async () => {
     const a = parseAmount(amount);
+    const trimmed = name.trim();
     if (a <= 0) return;
-    onAdd({ kind: "income", currency, amount: a, name: name.trim() || undefined });
+    if (!freeMode && !trimmed) return;
+    onAdd({
+      kind: "income",
+      currency,
+      amount: a,
+      name: trimmed || undefined,
+      expenseType: freeMode ? "regular" : "person",
+    });
+    if (!freeMode && trimmed && (currency === "KZT" || currency === "USD")) {
+      try {
+        const contactId = await findOrCreateContactByName(trimmed);
+        addContactTx.mutate({ contactId, currency, amount: a, note: "Касса: приход" });
+      } catch {
+        // локальная запись уже сохранена, синхронизацию с контактом можно повторить позже
+      }
+    }
     setAmount("");
     setName("");
     nameRef.current?.focus();
   };
+
   return (
     <SectionCard
       title="Приход (принесли деньги)"
@@ -1620,12 +1729,16 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
       tone="success"
       badge={`${txs.length}`}
     >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-        <FlowInput
-          ref={nameRef}
-          placeholder="От кого"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_1fr_1fr_auto]">
+        <ContactAutocompleteField
+          contacts={contacts}
+          name={name}
+          onNameChange={setName}
+          freeMode={freeMode}
+          onToggleFreeMode={() => setFreeMode((v) => !v)}
+          linkedPlaceholder="От кого"
+          freePlaceholder="От кого (заметка)"
+          nameRef={nameRef}
           onEnterNext={() => currencyRef.current?.focus()}
         />
         <CurrencySelect
@@ -1648,7 +1761,18 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
           <Plus className="h-4 w-4" /> M+
         </Button>
       </div>
-      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName />
+      <p className="text-[11px] text-muted-foreground">
+        Значок слева переключает: привязка к контакту (автоподсказка + баланс при наведении,
+        обновляет профиль в Контактах) или просто заметка без привязки.
+      </p>
+      <TxList
+        txs={txs}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+        withName
+        contactMap={contactMap}
+        globalRate={globalRate}
+      />
     </SectionCard>
   );
 }
@@ -1661,30 +1785,17 @@ function ExpenseCombinedCard({
   contacts,
   contactMap,
   globalRate,
-}: AddProps & {
-  contacts: ContactWithBalance[];
-  contactMap: Map<string, ContactWithBalance>;
-  globalRate: number;
-}) {
+}: ContactAddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
   const [freeMode, setFreeMode] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
-  const blurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addContactTx = useAddContactTransaction();
 
-  const suggestions = useMemo(() => {
-    const q = name.trim().toLowerCase();
-    if (!q || freeMode) return [];
-    const starts = contacts.filter((c) => c.name.toLowerCase().startsWith(q));
-    const list = starts.length > 0 ? starts : contacts.filter((c) => c.name.toLowerCase().includes(q));
-    return list.slice(0, 6);
-  }, [contacts, name, freeMode]);
-
-  const submit = () => {
+  const submit = async () => {
     const a = parseAmount(amount);
     const trimmed = name.trim();
     if (a <= 0) return;
@@ -1696,9 +1807,16 @@ function ExpenseCombinedCard({
       name: trimmed || undefined,
       expenseType: freeMode ? "regular" : "person",
     });
+    if (!freeMode && trimmed && (currency === "KZT" || currency === "USD")) {
+      try {
+        const contactId = await findOrCreateContactByName(trimmed);
+        addContactTx.mutate({ contactId, currency, amount: -a, note: "Касса: расход" });
+      } catch {
+        // локальная запись уже сохранена, синхронизацию с контактом можно повторить позже
+      }
+    }
     setAmount("");
     setName("");
-    setShowDropdown(false);
     nameRef.current?.focus();
   };
 
@@ -1709,50 +1827,18 @@ function ExpenseCombinedCard({
       tone="danger"
       badge={`${txs.length}`}
     >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1.2fr_1fr_1fr_auto]">
-        <button
-          type="button"
-          aria-label={freeMode ? "Режим: заметка" : "Режим: контакт"}
-          title={freeMode ? "Заметка (без привязки к контакту)" : "Привязка к контакту"}
-          onClick={() => setFreeMode((v) => !v)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center justify-self-center rounded-md border border-input text-muted-foreground hover:text-foreground sm:justify-self-auto"
-        >
-          {freeMode ? <Link2Off className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
-        </button>
-        <div className="relative">
-          <FlowInput
-            ref={nameRef}
-            placeholder={freeMode ? "Название расхода" : "Кто забрал / кому отдали"}
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              setShowDropdown(true);
-            }}
-            onFocus={() => setShowDropdown(true)}
-            onBlur={() => {
-              blurTimeout.current = setTimeout(() => setShowDropdown(false), 150);
-            }}
-            onEnterNext={() => currencyRef.current?.focus()}
-          />
-          {showDropdown && suggestions.length > 0 && (
-            <div className="absolute left-0 top-full z-20 mt-1 w-56 rounded-md border border-border bg-popover shadow-md">
-              {suggestions.map((c) => (
-                <div
-                  key={c.id}
-                  className="cursor-pointer px-3 py-1.5 text-sm hover:bg-muted"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    if (blurTimeout.current) clearTimeout(blurTimeout.current);
-                    setName(c.name);
-                    setShowDropdown(false);
-                  }}
-                >
-                  {c.name}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_1fr_1fr_auto]">
+        <ContactAutocompleteField
+          contacts={contacts}
+          name={name}
+          onNameChange={setName}
+          freeMode={freeMode}
+          onToggleFreeMode={() => setFreeMode((v) => !v)}
+          linkedPlaceholder="Кто забрал / кому отдали"
+          freePlaceholder="Название расхода"
+          nameRef={nameRef}
+          onEnterNext={() => currencyRef.current?.focus()}
+        />
         <CurrencySelect
           value={currency}
           onChange={setCurrency}
@@ -1771,8 +1857,8 @@ function ExpenseCombinedCard({
         </Button>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Значок слева переключает: привязка к контакту (автоподсказка + баланс при наведении) или
-        просто заметка без привязки.
+        Значок слева переключает: привязка к контакту (автоподсказка + баланс при наведении,
+        обновляет профиль в Контактах) или просто заметка без привязки.
       </p>
       <TxList
         txs={txs}

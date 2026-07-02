@@ -191,6 +191,25 @@ export function useCreateContact() {
   });
 }
 
+export async function findOrCreateContactByName(name: string): Promise<string> {
+  const trimmed = name.trim();
+  const { data: existing, error: findErr } = await supabase
+    .from("contacts")
+    .select("id")
+    .ilike("name", trimmed)
+    .limit(1)
+    .maybeSingle();
+  if (findErr) throw findErr;
+  if (existing) return existing.id;
+  const { data: created, error: createErr } = await supabase
+    .from("contacts")
+    .insert({ name: trimmed })
+    .select("id")
+    .single();
+  if (createErr) throw createErr;
+  return created.id;
+}
+
 export function effectiveRate(contact: { custom_rate: number | null }, globalRate: number) {
   return contact.custom_rate ?? globalRate;
 }
