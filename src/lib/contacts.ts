@@ -169,6 +169,7 @@ export function useAddContactTransaction() {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ["contact-detail", vars.contactId] });
       qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+      qc.invalidateQueries({ queryKey: ["contact-last5", vars.contactId] });
     },
   });
 }
