@@ -40,7 +40,8 @@ import {
   Download,
   FolderOpen,
   Users,
-  BookOpen,
+  Link2,
+  Link2Off,
 } from "lucide-react";
 import {
   buildDailyReport,
@@ -51,6 +52,14 @@ import {
   todayDateKey,
   type DailyReportData,
 } from "@/lib/daily-report";
+import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
+import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
+import {
+  effectiveRate,
+  useContactsWithBalances,
+  useGlobalRate,
+  type ContactWithBalance,
+} from "@/lib/contacts";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -294,6 +303,14 @@ function Index() {
   const [newDayPinError, setNewDayPinError] = useState("");
   const [peopleOpen, setPeopleOpen] = useState(false);
 
+  const { data: contactsWithBalances = [] } = useContactsWithBalances();
+  const { data: globalRate = 0 } = useGlobalRate();
+  const contactMap = useMemo(() => {
+    const m = new Map<string, ContactWithBalance>();
+    for (const c of contactsWithBalances) m.set(c.name.trim().toLowerCase(), c);
+    return m;
+  }, [contactsWithBalances]);
+
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
@@ -516,18 +533,17 @@ function Index() {
             onDelete={deleteTx}
           />
         </div>
-        <ExpenseRegularCard
-          txs={transactions.filter((t) => t.kind === "expense" && t.expenseType !== "person")}
-          onAdd={addTx}
-          onUpdate={updateTx}
-          onDelete={deleteTx}
-        />
-        <ExpensePersonCard
-          txs={transactions.filter((t) => t.kind === "expense" && t.expenseType === "person")}
-          onAdd={addTx}
-          onUpdate={updateTx}
-          onDelete={deleteTx}
-        />
+        <div className="lg:col-span-2">
+          <ExpenseCombinedCard
+            txs={transactions.filter((t) => t.kind === "expense")}
+            onAdd={addTx}
+            onUpdate={updateTx}
+            onDelete={deleteTx}
+            contacts={contactsWithBalances}
+            contactMap={contactMap}
+            globalRate={globalRate}
+          />
+        </div>
 
         {/* History */}
         <div className="lg:col-span-2">
@@ -627,7 +643,7 @@ function Index() {
             Перезапустить кассу
           </Button>
         </div>
-        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-3">
+        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-2">
           <Button
             variant="outline"
             className="w-full gap-2"
@@ -641,12 +657,6 @@ function Index() {
             <Link to="/contacts">
               <Users className="h-4 w-4" />
               Контакты (полная база)
-            </Link>
-          </Button>
-          <Button variant="outline" className="w-full gap-2" asChild>
-            <Link to="/journal">
-              <BookOpen className="h-4 w-4" />
-              Касса — журнал
             </Link>
           </Button>
         </div>
@@ -1239,9 +1249,11 @@ interface RowProps {
   withRate?: boolean;
   withName?: boolean;
   excludeKzt?: boolean;
+  contactMap?: Map<string, ContactWithBalance>;
+  globalRate?: number;
 }
 
-function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowProps) {
+function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contactMap, globalRate }: RowProps) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(tx.name ?? "");
   const [currency, setCurrency] = useState<Currency>(tx.currency);
@@ -1344,7 +1356,32 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt }: RowPr
         </span>
         <span className="shrink-0 tabular-nums text-muted-foreground">{timeStr(tx.ts)}</span>
         <span className="truncate text-foreground">
-          {tx.name && <span className="font-medium">{tx.name} · </span>}
+          {tx.name && tx.expenseType === "person" && contactMap?.get(tx.name.trim().toLowerCase()) ? (
+            (() => {
+              const c = contactMap.get(tx.name!.trim().toLowerCase())!;
+              return (
+                <HoverCard openDelay={150} closeDelay={80}>
+                  <HoverCardTrigger asChild>
+                    <span className="cursor-default font-medium underline decoration-dotted underline-offset-2">
+                      {tx.name}
+                    </span>
+                  </HoverCardTrigger>
+                  <ContactBalanceHoverCard
+                    contactId={c.id}
+                    name={c.name}
+                    kztBalance={c.kztBalance}
+                    usdBalance={c.usdBalance}
+                    rate={effectiveRate(c, globalRate ?? 0)}
+                    txCount={c.txCount}
+                    lastActivityAt={c.lastActivityAt}
+                  />
+                </HoverCard>
+              );
+            })()
+          ) : (
+            tx.name && <span className="font-medium">{tx.name}</span>
+          )}
+          {tx.name && " · "}
           <span className="tabular-nums">
             {fmt(tx.amount)} {CURRENCY_FLAG[tx.currency]} {tx.currency}
           </span>
@@ -1616,94 +1653,106 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   );
 }
 
-function ExpenseRegularCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
+function ExpenseCombinedCard({
+  txs,
+  onAdd,
+  onUpdate,
+  onDelete,
+  contacts,
+  contactMap,
+  globalRate,
+}: AddProps & {
+  contacts: ContactWithBalance[];
+  contactMap: Map<string, ContactWithBalance>;
+  globalRate: number;
+}) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
+  const [freeMode, setFreeMode] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
+  const blurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const suggestions = useMemo(() => {
+    const q = name.trim().toLowerCase();
+    if (!q || freeMode) return [];
+    const starts = contacts.filter((c) => c.name.toLowerCase().startsWith(q));
+    const list = starts.length > 0 ? starts : contacts.filter((c) => c.name.toLowerCase().includes(q));
+    return list.slice(0, 6);
+  }, [contacts, name, freeMode]);
+
   const submit = () => {
     const a = parseAmount(amount);
+    const trimmed = name.trim();
     if (a <= 0) return;
+    if (!freeMode && !trimmed) return;
     onAdd({
       kind: "expense",
       currency,
       amount: a,
-      name: name.trim() || undefined,
-      expenseType: "regular",
+      name: trimmed || undefined,
+      expenseType: freeMode ? "regular" : "person",
     });
     setAmount("");
     setName("");
+    setShowDropdown(false);
     nameRef.current?.focus();
   };
-  return (
-    <SectionCard
-      title="Обычные расходы"
-      icon={ArrowDownCircle}
-      tone="danger"
-      badge={`${txs.length}`}
-    >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1.2fr_1fr_1fr_auto]">
-        <FlowInput
-          ref={nameRef}
-          placeholder="Название расхода"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onEnterNext={() => currencyRef.current?.focus()}
-        />
-        <CurrencySelect
-          value={currency}
-          onChange={setCurrency}
-          triggerRef={currencyRef}
-          onEnterNext={() => amountRef.current?.focus()}
-        />
-        <AmountInput
-          ref={amountRef}
-          value={amount}
-          onChange={setAmount}
-          placeholder="Сумма"
-          onEnterSubmit={submit}
-        />
-        <Button onClick={submit} variant="destructive" className="gap-1">
-          <Minus className="h-4 w-4" /> M−
-        </Button>
-      </div>
-      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName />
-    </SectionCard>
-  );
-}
 
-function ExpensePersonCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
-  const [currency, setCurrency] = useState<Currency>("KZT");
-  const [amount, setAmount] = useState("");
-  const [name, setName] = useState("");
-  const nameRef = useRef<HTMLInputElement>(null);
-  const currencyRef = useRef<HTMLButtonElement>(null);
-  const amountRef = useRef<HTMLInputElement>(null);
-  const submit = () => {
-    const a = parseAmount(amount);
-    if (a <= 0 || !name.trim()) return;
-    onAdd({ kind: "expense", currency, amount: a, name: name.trim(), expenseType: "person" });
-    setAmount("");
-    setName("");
-    nameRef.current?.focus();
-  };
   return (
     <SectionCard
-      title="Кто забрал / кому отдали деньги"
+      title="Расходы / Отток денег"
       icon={ArrowDownCircle}
       tone="danger"
       badge={`${txs.length}`}
     >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-        <FlowInput
-          ref={nameRef}
-          placeholder="Кто забрал / кому отдали"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onEnterNext={() => currencyRef.current?.focus()}
-        />
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1.2fr_1fr_1fr_auto]">
+        <button
+          type="button"
+          aria-label={freeMode ? "Режим: заметка" : "Режим: контакт"}
+          title={freeMode ? "Заметка (без привязки к контакту)" : "Привязка к контакту"}
+          onClick={() => setFreeMode((v) => !v)}
+          className="flex h-9 w-9 shrink-0 items-center justify-center justify-self-center rounded-md border border-input text-muted-foreground hover:text-foreground sm:justify-self-auto"
+        >
+          {freeMode ? <Link2Off className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+        </button>
+        <div className="relative">
+          <FlowInput
+            ref={nameRef}
+            placeholder={freeMode ? "Название расхода" : "Кто забрал / кому отдали"}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setShowDropdown(true);
+            }}
+            onFocus={() => setShowDropdown(true)}
+            onBlur={() => {
+              blurTimeout.current = setTimeout(() => setShowDropdown(false), 150);
+            }}
+            onEnterNext={() => currencyRef.current?.focus()}
+          />
+          {showDropdown && suggestions.length > 0 && (
+            <div className="absolute left-0 top-full z-20 mt-1 w-56 rounded-md border border-border bg-popover shadow-md">
+              {suggestions.map((c) => (
+                <div
+                  key={c.id}
+                  className="cursor-pointer px-3 py-1.5 text-sm hover:bg-muted"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    if (blurTimeout.current) clearTimeout(blurTimeout.current);
+                    setName(c.name);
+                    setShowDropdown(false);
+                  }}
+                >
+                  {c.name}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <CurrencySelect
           value={currency}
           onChange={setCurrency}
@@ -1721,7 +1770,18 @@ function ExpensePersonCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
           <Minus className="h-4 w-4" /> M−
         </Button>
       </div>
-      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName />
+      <p className="text-[11px] text-muted-foreground">
+        Значок слева переключает: привязка к контакту (автоподсказка + баланс при наведении) или
+        просто заметка без привязки.
+      </p>
+      <TxList
+        txs={txs}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+        withName
+        contactMap={contactMap}
+        globalRate={globalRate}
+      />
     </SectionCard>
   );
 }

@@ -9,16 +9,10 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as JournalRouteImport } from './routes/journal'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ContactsIndexRouteImport } from './routes/contacts.index'
 import { Route as ContactsContactIdRouteImport } from './routes/contacts.$contactId'
 
-const JournalRoute = JournalRouteImport.update({
-  id: '/journal',
-  path: '/journal',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -37,47 +31,36 @@ const ContactsContactIdRoute = ContactsContactIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/journal': typeof JournalRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/contacts/': typeof ContactsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/journal': typeof JournalRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/contacts': typeof ContactsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/journal': typeof JournalRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/contacts/': typeof ContactsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/journal' | '/contacts/$contactId' | '/contacts/'
+  fullPaths: '/' | '/contacts/$contactId' | '/contacts/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/journal' | '/contacts/$contactId' | '/contacts'
-  id: '__root__' | '/' | '/journal' | '/contacts/$contactId' | '/contacts/'
+  to: '/' | '/contacts/$contactId' | '/contacts'
+  id: '__root__' | '/' | '/contacts/$contactId' | '/contacts/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  JournalRoute: typeof JournalRoute
   ContactsContactIdRoute: typeof ContactsContactIdRoute
   ContactsIndexRoute: typeof ContactsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/journal': {
-      id: '/journal'
-      path: '/journal'
-      fullPath: '/journal'
-      preLoaderRoute: typeof JournalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -104,7 +87,6 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  JournalRoute: JournalRoute,
   ContactsContactIdRoute: ContactsContactIdRoute,
   ContactsIndexRoute: ContactsIndexRoute,
 }
