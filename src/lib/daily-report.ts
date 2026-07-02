@@ -601,10 +601,22 @@ export function downloadExcelBuffer(buffer: ArrayBuffer, fileBaseName: string) {
 const DIR_DB = "cash-report-dir";
 const DIR_STORE = "handles";
 
+type DirHandleWithPerms = FileSystemDirectoryHandle & {
+  queryPermission: (opts: { mode: string }) => Promise<PermissionState>;
+  requestPermission: (opts: { mode: string }) => Promise<PermissionState>;
+};
+
 export async function pickReportsDirectory(): Promise<FileSystemDirectoryHandle | null> {
-  if (!("showDirectoryPicker" in window)) return null;
+  const w = window as unknown as {
+    showDirectoryPicker?: (opts?: {
+      mode?: string;
+      id?: string;
+      startIn?: string;
+    }) => Promise<FileSystemDirectoryHandle>;
+  };
+  if (!w.showDirectoryPicker) return null;
   try {
-    const handle = await window.showDirectoryPicker({
+    const handle = await w.showDirectoryPicker({
       mode: "readwrite",
       id: "cash-flow-reports",
       startIn: "documents",
@@ -640,9 +652,10 @@ export async function loadReportsDirectory(): Promise<FileSystemDirectoryHandle 
       req.onerror = () => reject(req.error);
     });
     if (!handle) return null;
-    const perm = await handle.queryPermission({ mode: "readwrite" });
+    const h = handle as DirHandleWithPerms;
+    const perm = await h.queryPermission({ mode: "readwrite" });
     if (perm === "granted") return handle;
-    const req = await handle.requestPermission({ mode: "readwrite" });
+    const req = await h.requestPermission({ mode: "readwrite" });
     return req === "granted" ? handle : null;
   } catch {
     return null;
