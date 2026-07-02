@@ -23,7 +23,7 @@ import {
   type ContactWithBalance,
 } from "@/lib/contacts";
 
-export const Route = createFileRoute("/contacts")({
+export const Route = createFileRoute("/contacts/")({
   head: () => ({
     meta: [{ title: "Контакты — Кассовый лист" }],
   }),
