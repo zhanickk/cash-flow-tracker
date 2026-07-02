@@ -40,6 +40,7 @@ import {
   Download,
   FolderOpen,
   Users,
+  BookOpen,
 } from "lucide-react";
 import {
   buildDailyReport,
@@ -626,7 +627,7 @@ function Index() {
             Перезапустить кассу
           </Button>
         </div>
-        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-2">
+        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-3">
           <Button
             variant="outline"
             className="w-full gap-2"
@@ -640,6 +641,12 @@ function Index() {
             <Link to="/contacts">
               <Users className="h-4 w-4" />
               Контакты (полная база)
+            </Link>
+          </Button>
+          <Button variant="outline" className="w-full gap-2" asChild>
+            <Link to="/journal">
+              <BookOpen className="h-4 w-4" />
+              Касса — журнал
             </Link>
           </Button>
         </div>

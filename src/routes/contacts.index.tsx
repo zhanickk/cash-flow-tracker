@@ -9,7 +9,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
+import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Plus, Search, Users } from "lucide-react";
 import {
@@ -20,7 +21,6 @@ import {
   useCreateContact,
   useGlobalRate,
   useUpdateGlobalRate,
-  type ContactWithBalance,
 } from "@/lib/contacts";
 
 export const Route = createFileRoute("/contacts/")({
@@ -41,46 +41,6 @@ function balanceTone(v: number) {
   if (v > 0) return "text-success";
   if (v < 0) return "text-danger";
   return "text-muted-foreground";
-}
-
-function ContactHoverCard({
-  contact,
-  globalRate,
-}: {
-  contact: ContactWithBalance;
-  globalRate: number;
-}) {
-  const rate = effectiveRate(contact, globalRate);
-  const combinedKzt = contact.kztBalance + contact.usdBalance * rate;
-  return (
-    <HoverCardContent className="w-72">
-      <div className="mb-2 text-sm font-medium">{contact.name}</div>
-      <div className="mb-2 grid grid-cols-2 gap-2">
-        <div className={cn("rounded-md bg-muted p-2", contact.kztBalance !== 0 && "bg-opacity-50")}>
-          <div className="text-[11px] text-muted-foreground">Тенге</div>
-          <div className={cn("text-sm font-semibold tabular-nums", balanceTone(contact.kztBalance))}>
-            {fmtAmount(contact.kztBalance)} ₸
-          </div>
-        </div>
-        <div className="rounded-md bg-muted p-2">
-          <div className="text-[11px] text-muted-foreground">USD</div>
-          <div className={cn("text-sm font-semibold tabular-nums", balanceTone(contact.usdBalance))}>
-            {fmtUsd(contact.usdBalance)}
-          </div>
-        </div>
-      </div>
-      <div className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground">
-        Итого в тенге по курсу {rate ? rate.toLocaleString("ru-RU") : "—"}:{" "}
-        <span className={cn("font-medium", balanceTone(combinedKzt))}>
-          {fmtAmount(combinedKzt)} ₸
-        </span>
-      </div>
-      <div className="mt-2 text-[11px] text-muted-foreground">
-        {contact.txCount} операц{contact.txCount === 1 ? "ия" : "ий"}
-        {contact.lastActivityAt ? ` · ${new Date(contact.lastActivityAt).toLocaleDateString("ru-RU")}` : ""}
-      </div>
-    </HoverCardContent>
-  );
 }
 
 function ContactsPage() {
@@ -203,7 +163,15 @@ function ContactsPage() {
                     </div>
                   </Link>
                 </HoverCardTrigger>
-                <ContactHoverCard contact={c} globalRate={globalRate} />
+                <ContactBalanceHoverCard
+                  contactId={c.id}
+                  name={c.name}
+                  kztBalance={c.kztBalance}
+                  usdBalance={c.usdBalance}
+                  rate={rate}
+                  txCount={c.txCount}
+                  lastActivityAt={c.lastActivityAt}
+                />
               </HoverCard>
             );
           })}

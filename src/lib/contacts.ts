@@ -18,6 +18,7 @@ function aggregateBalances(
 ): ContactWithBalance[] {
   const byContact = new Map<string, ContactTransaction[]>();
   for (const t of txs) {
+    if (!t.contact_id) continue;
     const list = byContact.get(t.contact_id) ?? [];
     list.push(t);
     byContact.set(t.contact_id, list);
@@ -76,6 +77,25 @@ export function useContactDetail(contactId: string | undefined) {
         else if (t.currency === "USD") usdBalance += Number(t.amount);
       }
       return { contact: contact as Contact, transactions: list, kztBalance, usdBalance };
+    },
+  });
+}
+
+export function useContactLast5(contactId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["contact-last5", contactId],
+    enabled: !!contactId,
+    queryFn: async (): Promise<ContactTransaction[]> => {
+      if (!contactId) return [];
+      const { data, error } = await supabase
+        .from("contact_transactions")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("occurred_at", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (error) throw error;
+      return data ?? [];
     },
   });
 }
