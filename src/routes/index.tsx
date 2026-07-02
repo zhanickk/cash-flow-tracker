@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -626,7 +626,7 @@ function Index() {
             Перезапустить кассу
           </Button>
         </div>
-        <div className="lg:col-span-2">
+        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-2">
           <Button
             variant="outline"
             className="w-full gap-2"
@@ -634,7 +634,13 @@ function Index() {
             disabled={peopleBalance.length === 0}
           >
             <Users className="h-4 w-4" />
-            Лица на балансе
+            Лица на балансе (сегодня)
+          </Button>
+          <Button variant="outline" className="w-full gap-2" asChild>
+            <Link to="/contacts">
+              <Users className="h-4 w-4" />
+              Контакты (полная база)
+            </Link>
           </Button>
         </div>
         {!reportDoneToday && transactions.length > 0 && (
