@@ -30,10 +30,52 @@ export type Database = {
         }
         Relationships: []
       }
+      contact_conversions: {
+        Row: {
+          contact_id: string
+          created_at: string
+          from_amount: number
+          from_currency: string
+          id: string
+          rate: number
+          to_amount: number
+          to_currency: string
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          from_amount: number
+          from_currency: string
+          id?: string
+          rate: number
+          to_amount: number
+          to_currency: string
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          from_amount?: number
+          from_currency?: string
+          id?: string
+          rate?: number
+          to_amount?: number
+          to_currency?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_conversions_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_transactions: {
         Row: {
           amount: number
           contact_id: string | null
+          conversion_id: string | null
           created_at: string
           currency: string
           entry_date: string
@@ -46,6 +88,7 @@ export type Database = {
         Insert: {
           amount: number
           contact_id?: string | null
+          conversion_id?: string | null
           created_at?: string
           currency: string
           entry_date?: string
@@ -58,6 +101,7 @@ export type Database = {
         Update: {
           amount?: number
           contact_id?: string | null
+          conversion_id?: string | null
           created_at?: string
           currency?: string
           entry_date?: string
@@ -73,6 +117,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_transactions_conversion_id_fkey"
+            columns: ["conversion_id"]
+            isOneToOne: false
+            referencedRelation: "contact_conversions"
             referencedColumns: ["id"]
           },
         ]

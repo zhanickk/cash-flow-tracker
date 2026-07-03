@@ -4,6 +4,7 @@ import type { Tables } from "@/integrations/supabase/types";
 
 export type Contact = Tables<"contacts">;
 export type ContactTransaction = Tables<"contact_transactions">;
+export type ContactConversion = Tables<"contact_conversions">;
 
 export interface ContactWithBalance extends Contact {
   kztBalance: number;
@@ -216,6 +217,138 @@ export function useCreateContact() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+    },
+  });
+}
+
+function conversionNote(input: {
+  fromCurrency: "KZT" | "USD";
+  toCurrency: "KZT" | "USD";
+  fromAmount: number;
+  toAmount: number;
+  rate: number;
+}) {
+  const fmtFrom =
+    input.fromCurrency === "KZT"
+      ? `${input.fromAmount.toLocaleString("ru-RU")} ₸`
+      : `$${input.fromAmount.toLocaleString("en-US")}`;
+  const fmtTo =
+    input.toCurrency === "KZT"
+      ? `${input.toAmount.toLocaleString("ru-RU")} ₸`
+      : `$${input.toAmount.toLocaleString("en-US")}`;
+  return `Конвертация: ${fmtFrom} → ${fmtTo} (курс ${input.rate.toLocaleString("ru-RU")})`;
+}
+
+export function useContactConversions(contactId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["contact-conversions", contactId],
+    enabled: !!contactId,
+    queryFn: async (): Promise<ContactConversion[]> => {
+      if (!contactId) return [];
+      const { data, error } = await supabase
+        .from("contact_conversions")
+        .select("*")
+        .eq("contact_id", contactId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+export function useAllContactConversions() {
+  return useQuery({
+    queryKey: ["all-contact-conversions"],
+    queryFn: async (): Promise<(ContactConversion & { contactName: string })[]> => {
+      const { data, error } = await supabase
+        .from("contact_conversions")
+        .select("*, contacts(name)")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      return (data ?? []).map((row) => {
+        const { contacts, ...rest } = row as ContactConversion & { contacts: { name: string } | null };
+        return { ...rest, contactName: contacts?.name ?? "—" };
+      });
+    },
+  });
+}
+
+export function useAddContactConversion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      contactId: string;
+      fromCurrency: "KZT" | "USD";
+      toCurrency: "KZT" | "USD";
+      fromAmount: number;
+      toAmount: number;
+      rate: number;
+    }) => {
+      const { data: conversion, error: convErr } = await supabase
+        .from("contact_conversions")
+        .insert({
+          contact_id: input.contactId,
+          from_currency: input.fromCurrency,
+          to_currency: input.toCurrency,
+          from_amount: input.fromAmount,
+          to_amount: input.toAmount,
+          rate: input.rate,
+        })
+        .select("id")
+        .single();
+      if (convErr) throw convErr;
+      const note = conversionNote(input);
+      const { error: txErr } = await supabase.from("contact_transactions").insert([
+        {
+          contact_id: input.contactId,
+          currency: input.fromCurrency,
+          amount: -input.fromAmount,
+          note,
+          source: "conversion",
+          conversion_id: conversion.id,
+        },
+        {
+          contact_id: input.contactId,
+          currency: input.toCurrency,
+          amount: input.toAmount,
+          note,
+          source: "conversion",
+          conversion_id: conversion.id,
+        },
+      ]);
+      if (txErr) throw txErr;
+      return conversion;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["contact-detail", vars.contactId] });
+      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+      qc.invalidateQueries({ queryKey: ["contact-last5", vars.contactId] });
+      qc.invalidateQueries({ queryKey: ["contact-conversions", vars.contactId] });
+      qc.invalidateQueries({ queryKey: ["all-contact-conversions"] });
+    },
+  });
+}
+
+export function useDeleteContactConversion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<{ contact_id: string }> => {
+      const { data, error } = await supabase
+        .from("contact_conversions")
+        .delete()
+        .eq("id", id)
+        .select("contact_id")
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["contact-detail", data.contact_id] });
+      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+      qc.invalidateQueries({ queryKey: ["contact-last5", data.contact_id] });
+      qc.invalidateQueries({ queryKey: ["contact-conversions", data.contact_id] });
+      qc.invalidateQueries({ queryKey: ["all-contact-conversions"] });
     },
   });
 }

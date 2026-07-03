@@ -11,11 +11,24 @@ import {
 } from "@/components/ui/dialog";
 import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
+import { ContactConversionDialog } from "@/components/contact-conversion-dialog";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Plus, Search, Users, Wallet, DollarSign } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowRight,
+  History,
+  Plus,
+  Search,
+  Users,
+  Wallet,
+  DollarSign,
+} from "lucide-react";
 import {
   fmtAmount,
+  fmtDateTime,
   fmtUsd,
+  useAllContactConversions,
   useContactsWithBalances,
   useCreateContact,
   type ContactWithBalance,
@@ -46,11 +59,13 @@ function ContactCurrencySection({
   icon: Icon,
   currency,
   contacts,
+  onConvert,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   currency: "KZT" | "USD";
   contacts: ContactWithBalance[];
+  onConvert: (contact: ContactWithBalance) => void;
 }) {
   return (
     <div>
@@ -66,30 +81,47 @@ function ContactCurrencySection({
           const value = currency === "KZT" ? c.kztBalance : c.usdBalance;
           return (
             <HoverCard key={c.id} openDelay={150} closeDelay={80}>
-              <HoverCardTrigger asChild>
-                <Link
-                  to="/contacts/$contactId"
-                  params={{ contactId: c.id }}
-                  className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/50"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
-                    {initials(c.name)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm">{c.name}</div>
-                    {c.lastActivityAt && (
-                      <div className="text-[11px] text-muted-foreground">
-                        {new Date(c.lastActivityAt).toLocaleDateString("ru-RU")}
-                      </div>
-                    )}
-                  </div>
-                  <div
-                    className={cn("shrink-0 text-sm font-semibold tabular-nums", balanceTone(value))}
+              <div className="group flex items-center gap-1 px-1 transition-colors hover:bg-muted/50">
+                <HoverCardTrigger asChild>
+                  <Link
+                    to="/contacts/$contactId"
+                    params={{ contactId: c.id }}
+                    className="flex min-w-0 flex-1 items-center gap-3 px-2 py-2.5"
                   >
-                    {currency === "KZT" ? fmtAmount(value) + " ₸" : fmtUsd(value)}
-                  </div>
-                </Link>
-              </HoverCardTrigger>
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">
+                      {initials(c.name)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm">{c.name}</div>
+                      {c.lastActivityAt && (
+                        <div className="text-[11px] text-muted-foreground">
+                          {new Date(c.lastActivityAt).toLocaleDateString("ru-RU")}
+                        </div>
+                      )}
+                    </div>
+                    <div
+                      className={cn(
+                        "shrink-0 text-sm font-semibold tabular-nums",
+                        balanceTone(value),
+                      )}
+                    >
+                      {currency === "KZT" ? fmtAmount(value) + " ₸" : fmtUsd(value)}
+                    </div>
+                  </Link>
+                </HoverCardTrigger>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  title="Конвертация"
+                  className="h-8 w-8 shrink-0 bg-convert-soft text-convert opacity-70 hover:bg-convert-soft hover:text-convert hover:opacity-100"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onConvert(c);
+                  }}
+                >
+                  <ArrowLeftRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
               <ContactBalanceHoverCard
                 contactId={c.id}
                 name={c.name}
@@ -124,11 +156,17 @@ function sortContacts(
 function ContactsPage() {
   const { data: contacts, isLoading } = useContactsWithBalances();
   const createContact = useCreateContact();
+  const { data: allConversions = [] } = useAllContactConversions();
 
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"balance" | "name" | "recent">("balance");
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [conversionOpen, setConversionOpen] = useState(false);
+  const [conversionFixedContact, setConversionFixedContact] = useState<
+    { id: string; name: string } | undefined
+  >(undefined);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -178,6 +216,28 @@ function ContactsPage() {
             <span className="hidden sm:inline">Контакт</span>
           </Button>
         </div>
+        <div className="mx-auto flex max-w-3xl items-center gap-2 px-3 pb-3">
+          <Button
+            size="sm"
+            className="flex-1 gap-1 bg-convert text-convert-foreground hover:bg-convert/90"
+            onClick={() => {
+              setConversionFixedContact(undefined);
+              setConversionOpen(true);
+            }}
+          >
+            <ArrowLeftRight className="h-4 w-4" />
+            Конвертация
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1"
+            onClick={() => setHistoryOpen(true)}
+          >
+            <History className="h-4 w-4" />
+            <span className="hidden sm:inline">История конвертаций</span>
+          </Button>
+        </div>
       </header>
 
       <main className="mx-auto max-w-3xl px-3 py-3">
@@ -192,12 +252,20 @@ function ContactsPage() {
               icon={Wallet}
               currency="KZT"
               contacts={kztContacts}
+              onConvert={(c) => {
+                setConversionFixedContact({ id: c.id, name: c.name });
+                setConversionOpen(true);
+              }}
             />
             <ContactCurrencySection
               title="Долларовые счета"
               icon={DollarSign}
               currency="USD"
               contacts={usdContacts}
+              onConvert={(c) => {
+                setConversionFixedContact({ id: c.id, name: c.name });
+                setConversionOpen(true);
+              }}
             />
           </div>
         )}
@@ -232,6 +300,47 @@ function ContactsPage() {
               Создать
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ContactConversionDialog
+        open={conversionOpen}
+        onOpenChange={setConversionOpen}
+        contacts={contacts ?? []}
+        fixedContact={conversionFixedContact}
+      />
+
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>История конвертаций</DialogTitle>
+          </DialogHeader>
+          {allConversions.length === 0 && (
+            <p className="py-6 text-center text-sm text-muted-foreground">Конвертаций пока нет</p>
+          )}
+          <div className="flex flex-col divide-y divide-border">
+            {allConversions.map((cv) => (
+              <div key={cv.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{cv.contactName}</div>
+                  <div className="text-[11px] text-muted-foreground">{fmtDateTime(cv.created_at)}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5 text-xs">
+                  <span className="tabular-nums">
+                    {cv.from_currency === "KZT"
+                      ? `${Number(cv.from_amount).toLocaleString("ru-RU")} ₸`
+                      : `$${Number(cv.from_amount).toLocaleString("en-US")}`}
+                  </span>
+                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
+                  <span className="font-medium tabular-nums">
+                    {cv.to_currency === "KZT"
+                      ? `${Number(cv.to_amount).toLocaleString("ru-RU")} ₸`
+                      : `$${Number(cv.to_amount).toLocaleString("en-US")}`}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

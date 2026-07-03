@@ -65,6 +65,9 @@
   --color-danger: var(--danger);
   --color-danger-foreground: var(--danger-foreground);
   --color-danger-soft: var(--danger-soft);
+  --color-convert: var(--convert);
+  --color-convert-foreground: var(--convert-foreground);
+  --color-convert-soft: var(--convert-soft);
 }
 
 :root {
@@ -94,6 +97,9 @@
   --danger: oklch(0.6 0.22 25);
   --danger-foreground: oklch(0.99 0 0);
   --danger-soft: oklch(0.96 0.05 25);
+  --convert: oklch(0.5 0.2 300);
+  --convert-foreground: oklch(0.99 0 0);
+  --convert-soft: oklch(0.95 0.05 300);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
