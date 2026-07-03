@@ -13,7 +13,6 @@ export function ContactBalanceHoverCard({
   name,
   kztBalance,
   usdBalance,
-  rate,
   txCount,
   lastActivityAt,
 }: {
@@ -21,12 +20,10 @@ export function ContactBalanceHoverCard({
   name: string;
   kztBalance: number;
   usdBalance: number;
-  rate: number;
   txCount?: number;
   lastActivityAt?: string | null;
 }) {
   const { data: last5, isLoading } = useContactLast5(contactId);
-  const combinedKzt = kztBalance + usdBalance * rate;
 
   return (
     <HoverCardContent className="w-96 p-4">
@@ -53,13 +50,6 @@ export function ContactBalanceHoverCard({
             {fmtUsd(usdBalance)}
           </div>
         </div>
-      </div>
-
-      <div className="mb-3 rounded-lg bg-muted/60 p-3 text-sm leading-relaxed text-muted-foreground">
-        Итого в тенге по курсу {rate ? rate.toLocaleString("ru-RU") : "—"}:{" "}
-        <span className={cn("font-medium tabular-nums", balanceTone(combinedKzt))}>
-          {fmtAmount(combinedKzt)} ₸
-        </span>
       </div>
 
       <div className="border-t border-border pt-3">

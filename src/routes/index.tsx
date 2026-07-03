@@ -67,12 +67,10 @@ import {
 import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
 import {
-  effectiveRate,
   findOrCreateContactByName,
   useAddContactTransaction,
   useContactsWithBalances,
   useDeleteContactTransaction,
-  useGlobalRate,
   type ContactWithBalance,
 } from "@/lib/contacts";
 
@@ -320,7 +318,6 @@ function Index() {
   const [peopleOpen, setPeopleOpen] = useState(false);
 
   const { data: contactsWithBalances = [] } = useContactsWithBalances();
-  const { data: globalRate = 0 } = useGlobalRate();
   const deleteContactTx = useDeleteContactTransaction();
   const contactMap = useMemo(() => {
     const m = new Map<string, ContactWithBalance>();
@@ -553,7 +550,6 @@ function Index() {
           onDelete={deleteTx}
           contacts={contactsWithBalances}
           contactMap={contactMap}
-          globalRate={globalRate}
         />
         <ExpenseCombinedCard
           txs={transactions.filter((t) => t.kind === "expense")}
@@ -562,7 +558,6 @@ function Index() {
           onDelete={deleteTx}
           contacts={contactsWithBalances}
           contactMap={contactMap}
-          globalRate={globalRate}
         />
 
         {/* History */}
@@ -1270,10 +1265,9 @@ interface RowProps {
   withName?: boolean;
   excludeKzt?: boolean;
   contactMap?: Map<string, ContactWithBalance>;
-  globalRate?: number;
 }
 
-function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contactMap, globalRate }: RowProps) {
+function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contactMap }: RowProps) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(tx.name ?? "");
   const [currency, setCurrency] = useState<Currency>(tx.currency);
@@ -1391,7 +1385,6 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contact
                     name={c.name}
                     kztBalance={c.kztBalance}
                     usdBalance={c.usdBalance}
-                    rate={effectiveRate(c, globalRate ?? 0)}
                     txCount={c.txCount}
                     lastActivityAt={c.lastActivityAt}
                   />
@@ -1723,10 +1716,9 @@ function ContactAutocompleteField({
 interface ContactAddProps extends AddProps {
   contacts: ContactWithBalance[];
   contactMap: Map<string, ContactWithBalance>;
-  globalRate: number;
 }
 
-function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap, globalRate }: ContactAddProps) {
+function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: ContactAddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
@@ -1818,7 +1810,6 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap, glob
         onDelete={onDelete}
         withName
         contactMap={contactMap}
-        globalRate={globalRate}
       />
     </SectionCard>
   );
@@ -1831,7 +1822,6 @@ function ExpenseCombinedCard({
   onDelete,
   contacts,
   contactMap,
-  globalRate,
 }: ContactAddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
@@ -1921,7 +1911,6 @@ function ExpenseCombinedCard({
         onDelete={onDelete}
         withName
         contactMap={contactMap}
-        globalRate={globalRate}
       />
     </SectionCard>
   );

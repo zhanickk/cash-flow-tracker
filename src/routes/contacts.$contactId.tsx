@@ -10,17 +10,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Plus, RotateCcw } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import {
-  effectiveRate,
   fmtAmount,
   fmtDateTime,
   fmtUsd,
   useAddContactTransaction,
   useContactDetail,
   useDeleteContactTransaction,
-  useGlobalRate,
-  useUpdateContactRate,
 } from "@/lib/contacts";
 import { Trash2 } from "lucide-react";
 import {
@@ -59,12 +56,9 @@ function initials(name: string) {
 function ContactDetailPage() {
   const { contactId } = Route.useParams();
   const { data, isLoading } = useContactDetail(contactId);
-  const { data: globalRate = 0 } = useGlobalRate();
-  const updateRate = useUpdateContactRate();
   const addTx = useAddContactTransaction();
   const deleteTx = useDeleteContactTransaction();
 
-  const [rateDraft, setRateDraft] = useState<string | null>(null);
   const [currency, setCurrency] = useState<"KZT" | "USD">("KZT");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -78,8 +72,6 @@ function ContactDetailPage() {
   }
 
   const { contact, transactions, kztBalance, usdBalance } = data;
-  const rate = effectiveRate(contact, globalRate);
-  const combinedKzt = kztBalance + usdBalance * rate;
 
   const submit = () => {
     const n = parseFloat(amount.replace(/\s/g, "").replace(",", "."));
@@ -116,45 +108,6 @@ function ContactDetailPage() {
             <div className={cn("text-xl font-semibold tabular-nums", balanceTone(usdBalance))}>
               {fmtUsd(usdBalance)}
             </div>
-          </div>
-        </div>
-
-        <div className="mb-4 rounded-lg border border-border bg-card p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Итого в тенге, по курсу клиента</span>
-            <span className={cn("text-base font-semibold tabular-nums", balanceTone(combinedKzt))}>
-              {fmtAmount(combinedKzt)} ₸
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>курс для {contact.name.split(" ")[0]}</span>
-            <Input
-              className="h-7 w-24 text-right tabular-nums"
-              value={rateDraft ?? (contact.custom_rate ? String(contact.custom_rate) : "")}
-              placeholder={String(globalRate || "")}
-              onFocus={() =>
-                setRateDraft(contact.custom_rate ? String(contact.custom_rate) : String(globalRate || ""))
-              }
-              onChange={(e) => setRateDraft(e.target.value.replace(/[^\d.,]/g, ""))}
-              onBlur={() => {
-                if (rateDraft === null) return;
-                const n = parseFloat(rateDraft.replace(",", "."));
-                updateRate.mutate({ contactId: contact.id, rate: !isNaN(n) && n > 0 ? n : null });
-                setRateDraft(null);
-              }}
-            />
-            <span>общий: {globalRate ? globalRate.toLocaleString("ru-RU") : "—"}</span>
-            {contact.custom_rate != null && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1 px-2 text-xs"
-                onClick={() => updateRate.mutate({ contactId: contact.id, rate: null })}
-              >
-                <RotateCcw className="h-3 w-3" />
-                Сбросить к общему
-              </Button>
-            )}
           </div>
         </div>
 
