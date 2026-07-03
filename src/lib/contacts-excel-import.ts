@@ -1,4 +1,4 @@
-import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 
 export interface ParsedBalanceRow {
   rawName: string;
@@ -17,11 +17,8 @@ export interface ParsedExcelResult {
  *  "Дима 04/09/25" -> "Дима", "Серикхан 050126" -> "Серикхан". */
 export function normalizeContactName(raw: string): string {
   let s = raw.trim().replace(/\s+/g, " ");
-  // trailing date dd.mm.yy / dd/mm/yy / dd.mm.yyyy etc.
   s = s.replace(/\s+\d{1,2}[./]\d{1,2}[./]\d{2,4}$/, "");
-  // trailing 6-digit blob (ddmmyy)
   s = s.replace(/\s+\d{6}$/, "");
-  // trailing partial date dd/mm or dd.mm
   s = s.replace(/\s+\d{1,2}[./]\d{1,2}$/, "");
   s = s.trim().replace(/[.,]+$/, "").trim();
   return s;
@@ -39,16 +36,21 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
 
-/** Locate a header cell in the sheet whose (trimmed, lowercased) value equals or
- * contains one of the given needles. Returns {row, col} of the first match. */
+function cellAt(ws: XLSX.WorkSheet, row: number, col: number): unknown {
+  const addr = XLSX.utils.encode_cell({ r: row - 1, c: col - 1 });
+  return ws[addr]?.v;
+}
+
+/** Locate a header cell (1-indexed row/col) whose trimmed lowercase string value
+ * satisfies `matches`. Returns the first match scanning row by row. */
 function findHeaderCell(
-  ws: ExcelJS.Worksheet,
+  ws: XLSX.WorkSheet,
+  range: XLSX.Range,
   matches: (v: string) => boolean,
 ): { row: number; col: number } | null {
-  for (let r = 1; r <= ws.rowCount; r++) {
-    const row = ws.getRow(r);
-    for (let c = 1; c <= ws.columnCount; c++) {
-      const v = row.getCell(c).value;
+  for (let r = range.s.r + 1; r <= range.e.r + 1; r++) {
+    for (let c = range.s.c + 1; c <= range.e.c + 1; c++) {
+      const v = cellAt(ws, r, c);
       if (typeof v === "string" && matches(v.trim().toLowerCase())) {
         return { row: r, col: c };
       }
@@ -58,22 +60,22 @@ function findHeaderCell(
 }
 
 function collectColumn(
-  ws: ExcelJS.Worksheet,
+  ws: XLSX.WorkSheet,
   headerRow: number,
   nameCol: number,
   amountCol: number,
   group: ParsedBalanceRow["group"],
   currency: "KZT" | "USD",
+  maxRow: number,
   maxScan = 80,
 ): ParsedBalanceRow[] {
   const out: ParsedBalanceRow[] = [];
-  const lastRow = Math.min(ws.rowCount, headerRow + maxScan);
+  const lastRow = Math.min(maxRow, headerRow + maxScan);
   for (let r = headerRow + 1; r <= lastRow; r++) {
-    const nameVal = ws.getCell(r, nameCol).value;
-    const amountVal = ws.getCell(r, amountCol).value;
+    const nameVal = cellAt(ws, r, nameCol);
+    const amountVal = cellAt(ws, r, amountCol);
     if (!isNonEmptyString(nameVal) || !isFiniteNumber(amountVal)) continue;
     const rawName = nameVal.trim();
-    // skip obvious non-name sub-header labels
     if (/^(доллар|тенге|usd|kzt)$/i.test(rawName)) continue;
     out.push({
       rawName,
@@ -87,26 +89,33 @@ function collectColumn(
 }
 
 export async function parseContactsExcel(buffer: ArrayBuffer): Promise<ParsedExcelResult> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
-  if (wb.worksheets.length === 0) throw new Error("В файле нет листов");
-  const ws = wb.worksheets[wb.worksheets.length - 1];
+  // Pass 1: cheap — read only sheet names (bookSheets skips parsing cell data).
+  const namesOnly = XLSX.read(buffer, { type: "array", bookSheets: true });
+  if (namesOnly.SheetNames.length === 0) throw new Error("В файле нет листов");
+  const lastSheetName = namesOnly.SheetNames[namesOnly.SheetNames.length - 1];
 
-  const plusHeader = findHeaderCell(ws, (v) => v === "плюс");
-  const minusHeader = findHeaderCell(ws, (v) => v === "минус");
-  const salynganHeader = findHeaderCell(ws, (v) => v.includes("салынган"));
-  const karyzHeader = findHeaderCell(ws, (v) => v.includes("карыз"));
+  // Pass 2: parse only the last sheet's data (avoids parsing all other sheets).
+  const wb = XLSX.read(buffer, { type: "array", sheets: [lastSheetName] });
+  const ws = wb.Sheets[lastSheetName];
+  if (!ws || !ws["!ref"]) throw new Error("Не удалось прочитать последний лист файла");
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const maxRow = range.e.r + 1;
+
+  const plusHeader = findHeaderCell(ws, range, (v) => v === "плюс");
+  const minusHeader = findHeaderCell(ws, range, (v) => v === "минус");
+  const salynganHeader = findHeaderCell(ws, range, (v) => v.includes("салынган"));
+  const karyzHeader = findHeaderCell(ws, range, (v) => v.includes("карыз"));
 
   const rows: ParsedBalanceRow[] = [];
 
   if (plusHeader) {
     rows.push(
-      ...collectColumn(ws, plusHeader.row, plusHeader.col - 1, plusHeader.col, "тенге плюс", "KZT"),
+      ...collectColumn(ws, plusHeader.row, plusHeader.col - 1, plusHeader.col, "тенге плюс", "KZT", maxRow),
     );
   }
   if (minusHeader) {
     rows.push(
-      ...collectColumn(ws, minusHeader.row, minusHeader.col - 1, minusHeader.col, "тенге минус", "KZT"),
+      ...collectColumn(ws, minusHeader.row, minusHeader.col - 1, minusHeader.col, "тенге минус", "KZT", maxRow),
     );
   }
   if (salynganHeader) {
@@ -118,12 +127,13 @@ export async function parseContactsExcel(buffer: ArrayBuffer): Promise<ParsedExc
         salynganHeader.col + 1,
         "доллар САЛЫНГАН",
         "USD",
+        maxRow,
       ),
     );
   }
   if (karyzHeader) {
     rows.push(
-      ...collectColumn(ws, karyzHeader.row, karyzHeader.col, karyzHeader.col + 1, "доллар КАРЫЗ", "USD"),
+      ...collectColumn(ws, karyzHeader.row, karyzHeader.col, karyzHeader.col + 1, "доллар КАРЫЗ", "USD", maxRow),
     );
   }
 
@@ -133,5 +143,5 @@ export async function parseContactsExcel(buffer: ArrayBuffer): Promise<ParsedExc
     );
   }
 
-  return { sheetName: ws.name, rows };
+  return { sheetName: lastSheetName, rows };
 }
