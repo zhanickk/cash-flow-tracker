@@ -30,6 +30,80 @@ export type Database = {
         }
         Relationships: []
       }
+      cash_register_history: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          kind: string | null
+          summary: string
+          ts: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          kind?: string | null
+          summary: string
+          ts?: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          kind?: string | null
+          summary?: string
+          ts?: string
+        }
+        Relationships: []
+      }
+      cash_transactions: {
+        Row: {
+          amount: number
+          contact_tx_id: string | null
+          created_at: string
+          currency: string
+          expense_type: string | null
+          id: string
+          kind: string
+          name: string | null
+          rate: number | null
+          ts: string
+        }
+        Insert: {
+          amount: number
+          contact_tx_id?: string | null
+          created_at?: string
+          currency: string
+          expense_type?: string | null
+          id?: string
+          kind: string
+          name?: string | null
+          rate?: number | null
+          ts?: string
+        }
+        Update: {
+          amount?: number
+          contact_tx_id?: string | null
+          created_at?: string
+          currency?: string
+          expense_type?: string | null
+          id?: string
+          kind?: string
+          name?: string | null
+          rate?: number | null
+          ts?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_transactions_contact_tx_id_fkey"
+            columns: ["contact_tx_id"]
+            isOneToOne: false
+            referencedRelation: "contact_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_conversions: {
         Row: {
           contact_id: string

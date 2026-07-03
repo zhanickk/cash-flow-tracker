@@ -54,6 +54,7 @@ import {
   Users,
   Link2,
   Link2Off,
+  ExternalLink,
 } from "lucide-react";
 import {
   buildDailyReport,
@@ -64,6 +65,7 @@ import {
   todayDateKey,
   type DailyReportData,
 } from "@/lib/daily-report";
+import { buildSummaryReportWorkbook, summaryReportFileBaseName } from "@/lib/summary-report";
 import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
 import {
@@ -73,74 +75,27 @@ import {
   useDeleteContactTransaction,
   type ContactWithBalance,
 } from "@/lib/contacts";
-
-export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Кассовый лист — Обмен валют" },
-      {
-        name: "description",
-        content:
-          "Кассовый лист обменного пункта: остаток, покупка, продажа, приход, расход по 6 валютам.",
-      },
-    ],
-  }),
-  component: Index,
-});
-
-/* ============== Types ============== */
-
-type Currency = "USD" | "EUR" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
-
-const CURRENCIES: { code: Currency; label: string; short: string; symbol: string }[] = [
-  { code: "USD", label: "Доллар (USD)", short: "USD", symbol: "$" },
-  { code: "EUR", label: "Евро (EUR)", short: "EUR", symbol: "€" },
-  { code: "RUB", label: "Рубль (RUB)", short: "RUB", symbol: "₽" },
-  { code: "KGS", label: "Сом (KGS)", short: "KGS", symbol: "с" },
-  { code: "CNY", label: "Юань (CNY)", short: "CNY", symbol: "¥" },
-  { code: "GOLD", label: "Золото (гр)", short: "Gold", symbol: "Au" },
-  { code: "KZT", label: "Тенге (KZT)", short: "KZT", symbol: "₸" },
-];
-
-const FX_CURRENCIES = CURRENCIES.filter((c) => c.code !== "KZT");
-
-type TxKind = "opening" | "buy" | "sell" | "income" | "expense";
-
-interface Transaction {
-  id: string;
-  kind: TxKind;
-  ts: number;
-  name?: string;
-  currency: Currency;
-  amount: number;
-  rate?: number;
-  expenseType?: "regular" | "person";
-  contactTxId?: string;
-}
-
-interface HistoryEntry {
-  id: string;
-  ts: number;
-  action: "add" | "edit" | "delete" | "reset";
-  kind?: TxKind;
-  summary: string;
-}
-
-const STORAGE_KEY = "cash-register-v2";
-const HISTORY_KEY = "cash-register-history-v2";
-const REPORT_DONE_KEY = "cash-register-report-done-v1";
-const RESET_PIN = "0000";
-
-/* ============== Helpers ============== */
-
-function fmt(n: number, frac = 2) {
-  if (!isFinite(n)) return "0";
-  const v = n.toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: frac,
-  });
-  return v.replace(/,/g, "_").replace(/\./g, ",").replace(/_/g, ".");
-}
+import {
+  type Currency,
+  CURRENCIES,
+  FX_CURRENCIES,
+  type TxKind,
+  type Transaction,
+  type HistoryEntry,
+  fmt,
+  txDeltas,
+  txLabel,
+  timeStr,
+} from "@/lib/cash-shared";
+import {
+  useCashTransactions,
+  useCashHistory,
+  useAddCashTransaction,
+  useUpdateCashTransaction,
+  useDeleteCashTransaction,
+  useResetCashRegister,
+  useNewDayCashRegister,
+} from "@/lib/cash-register";
 
 function parseAmount(s: string): number {
   if (!s) return 0;
@@ -238,63 +193,35 @@ function todayStr() {
   });
 }
 
-function timeStr(ts: number) {
-  return new Date(ts).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-}
+const REPORT_DONE_KEY = "cash-register-report-done-v1";
+const RESET_PIN = "0000";
 
-function txDeltas(tx: Transaction): Partial<Record<Currency, number>> {
-  switch (tx.kind) {
-    case "opening":
-      return { [tx.currency]: tx.amount };
-    case "buy":
-      return { KZT: -(tx.amount * (tx.rate || 0)), [tx.currency]: tx.amount };
-    case "sell":
-      return { KZT: tx.amount * (tx.rate || 0), [tx.currency]: -tx.amount };
-    case "income":
-      return { [tx.currency]: tx.amount };
-    case "expense":
-      return { [tx.currency]: -tx.amount };
-  }
-}
+export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Кассовый лист — Обмен валют" },
+      {
+        name: "description",
+        content:
+          "Кассовый лист обменного пункта: остаток, покупка, продажа, приход, расход по 6 валютам.",
+      },
+    ],
+  }),
+  component: Index,
+});
 
-function txLabel(tx: Transaction): string {
-  const base = `${tx.name ? tx.name + " · " : ""}${fmt(tx.amount)} ${tx.currency}${tx.rate ? ` × ${tx.rate}` : ""}`;
-  const k =
-    tx.kind === "opening"
-      ? "Остаток"
-      : tx.kind === "buy"
-        ? "Покупка"
-        : tx.kind === "sell"
-          ? "Продажа"
-          : tx.kind === "income"
-            ? "Приход"
-            : tx.expenseType === "person"
-              ? "Расход (кому/кто забрал)"
-              : "Расход";
-  return `${k}: ${base}`;
-}
 
 /* ============== Main ============== */
 
 function Index() {
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as Transaction[]) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [history, setHistory] = useState<HistoryEntry[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY);
-      return raw ? (JSON.parse(raw) as HistoryEntry[]) : [];
-    } catch {
-      return [];
-    }
-  });
+  const { data: transactions = [] } = useCashTransactions();
+  const { data: history = [] } = useCashHistory();
+  const addCashTx = useAddCashTransaction();
+  const updateCashTx = useUpdateCashTransaction();
+  const deleteCashTx = useDeleteCashTransaction();
+  const resetCashRegister = useResetCashRegister();
+  const newDayCashRegister = useNewDayCashRegister();
+
   const [showHistory, setShowHistory] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [pin, setPin] = useState("");
@@ -316,6 +243,7 @@ function Index() {
   const [newDayPin, setNewDayPin] = useState("");
   const [newDayPinError, setNewDayPinError] = useState("");
   const [peopleOpen, setPeopleOpen] = useState(false);
+  const [summaryBusy, setSummaryBusy] = useState(false);
 
   const { data: contactsWithBalances = [] } = useContactsWithBalances();
   const deleteContactTx = useDeleteContactTransaction();
@@ -324,21 +252,6 @@ function Index() {
     for (const c of contactsWithBalances) m.set(c.name.trim().toLowerCase(), c);
     return m;
   }, [contactsWithBalances]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
-    } catch {
-      // ignore localStorage write errors (private mode/quota)
-    }
-  }, [transactions]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-    } catch {
-      // ignore localStorage write errors (private mode/quota)
-    }
-  }, [history]);
 
   const totals = useMemo(() => {
     const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, RUB: 0, KGS: 0, CNY: 0, GOLD: 0 };
@@ -374,50 +287,24 @@ function Index() {
     return [...map.values()].sort((a, b) => Math.abs(b.netKzt) - Math.abs(a.netKzt));
   }, [transactions]);
 
-  function logHistory(entry: Omit<HistoryEntry, "id" | "ts">) {
-    setHistory((prev) => [...prev, { ...entry, id: crypto.randomUUID(), ts: Date.now() }]);
-  }
-
   function addTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
     const full: Transaction = { ...tx, id: tx.id ?? crypto.randomUUID(), ts: Date.now() };
-    setTransactions((p) => [...p, full]);
-    logHistory({ action: "add", kind: full.kind, summary: `Добавлено — ${txLabel(full)}` });
+    addCashTx.mutate(full);
   }
 
   function updateTx(id: string, patch: Partial<Transaction>) {
-    setTransactions((prev) => {
-      const old = prev.find((t) => t.id === id);
-      if (!old) return prev;
-      const updated = { ...old, ...patch };
-      const changes: string[] = [];
-      if (patch.name !== undefined && patch.name !== old.name)
-        changes.push(`имя: "${old.name ?? ""}" → "${patch.name ?? ""}"`);
-      if (patch.currency && patch.currency !== old.currency)
-        changes.push(`валюта: ${old.currency} → ${patch.currency}`);
-      if (patch.amount !== undefined && patch.amount !== old.amount)
-        changes.push(`сумма: ${fmt(old.amount)} → ${fmt(patch.amount)}`);
-      if (patch.rate !== undefined && patch.rate !== old.rate)
-        changes.push(`курс: ${old.rate ?? "—"} → ${patch.rate ?? "—"}`);
-      logHistory({
-        action: "edit",
-        kind: old.kind,
-        summary: `Изменено — ${txLabel(old)} (${changes.join(", ") || "без изменений"})`,
-      });
-      return prev.map((t) => (t.id === id ? updated : t));
-    });
+    const old = transactions.find((t) => t.id === id);
+    if (!old) return;
+    updateCashTx.mutate({ id, patch, old });
   }
 
   function deleteTx(id: string) {
-    setTransactions((prev) => {
-      const old = prev.find((t) => t.id === id);
-      if (old) {
-        logHistory({ action: "delete", kind: old.kind, summary: `Удалено — ${txLabel(old)}` });
-        if (old.contactTxId) {
-          deleteContactTx.mutate(old.contactTxId);
-        }
-      }
-      return prev.filter((t) => t.id !== id);
-    });
+    const old = transactions.find((t) => t.id === id);
+    if (!old) return;
+    deleteCashTx.mutate(old);
+    if (old.contactTxId) {
+      deleteContactTx.mutate(old.contactTxId);
+    }
   }
 
   function markReportDone() {
@@ -450,6 +337,21 @@ function Index() {
     }
   }
 
+  async function handleDownloadSummary() {
+    setSummaryBusy(true);
+    try {
+      const rows = contactsWithBalances
+        .filter((c) => c.kztBalance !== 0 || c.usdBalance !== 0)
+        .map((c) => ({ name: c.name, kztBalance: c.kztBalance, usdBalance: c.usdBalance }));
+      const buffer = await buildSummaryReportWorkbook(rows, totals);
+      const baseName = summaryReportFileBaseName();
+      await saveExcelToDirectory(buffer, baseName);
+      downloadExcelBuffer(buffer, baseName);
+    } finally {
+      setSummaryBusy(false);
+    }
+  }
+
   function tryNewDay() {
     if (!reportDoneToday) {
       setNewDayPinError("Сначала сформируйте дневной отчёт за сегодня");
@@ -467,11 +369,7 @@ function Index() {
       currency: c.code,
       amount: totals[c.code],
     }));
-    setTransactions(openings);
-    logHistory({
-      action: "reset",
-      summary: `НОВЫЙ ДЕНЬ — остатки перенесены (${openings.length} валют)`,
-    });
+    newDayCashRegister.mutate(openings);
     localStorage.removeItem(REPORT_DONE_KEY);
     setReportDoneToday(false);
     setNewDayOpen(false);
@@ -484,8 +382,7 @@ function Index() {
       setPinError("Неверный PIN");
       return;
     }
-    setTransactions([]);
-    logHistory({ action: "reset", summary: "КАССА ПЕРЕЗАПУЩЕНА — все операции очищены" });
+    resetCashRegister.mutate();
     setResetOpen(false);
     setPin("");
     setPinError("");
@@ -568,9 +465,17 @@ function Index() {
                 <History className="h-5 w-5 text-primary" />
                 Журнал изменений ({history.length})
               </CardTitle>
-              <Button variant="outline" size="sm" onClick={() => setShowHistory((v) => !v)}>
-                {showHistory ? "Скрыть" : "Показать"}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" className="gap-1" asChild>
+                  <Link to="/journal">
+                    <ExternalLink className="h-4 w-4" />
+                    На всю страницу
+                  </Link>
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setShowHistory((v) => !v)}>
+                  {showHistory ? "Скрыть" : "Показать"}
+                </Button>
+              </div>
             </CardHeader>
             {showHistory && (
               <CardContent>
@@ -672,6 +577,23 @@ function Index() {
             <Link to="/contacts">
               <Users className="h-4 w-4" />
               Контакты (полная база)
+            </Link>
+          </Button>
+        </div>
+        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-2">
+          <Button
+            variant="outline"
+            className="w-full gap-2"
+            onClick={handleDownloadSummary}
+            disabled={summaryBusy}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            {summaryBusy ? "Формируем…" : "Скачать сводку (контакты + касса)"}
+          </Button>
+          <Button variant="ghost" className="w-full gap-2" asChild>
+            <Link to="/journal">
+              <History className="h-4 w-4" />
+              Журнал изменений
             </Link>
           </Button>
         </div>

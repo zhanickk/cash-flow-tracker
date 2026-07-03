@@ -275,10 +275,21 @@ function ContactDetailPage() {
           {transactions.map((t) => (
             <div
               key={t.id}
-              className="group flex items-center justify-between gap-3 px-3 py-2"
+              className={cn(
+                "group flex items-center justify-between gap-3 px-3 py-2",
+                t.source === "excel_import" && "bg-success-soft",
+              )}
+              title={t.source === "excel_import" ? "Импортировано из Excel" : undefined}
             >
               <div className="min-w-0">
-                <div className="text-xs text-muted-foreground">{fmtDateTime(t.occurred_at)}</div>
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>{fmtDateTime(t.occurred_at)}</span>
+                  {t.source === "excel_import" && (
+                    <span className="rounded bg-success px-1 py-0.5 text-[9px] font-semibold uppercase text-success-foreground">
+                      Excel
+                    </span>
+                  )}
+                </div>
                 {t.note && <div className="truncate text-xs text-muted-foreground">{t.note}</div>}
               </div>
               <div className="flex shrink-0 items-center gap-2">

@@ -60,7 +60,14 @@ export function ContactBalanceHoverCard({
         )}
         <div className="flex flex-col gap-1.5">
           {(last5 ?? []).map((t) => (
-            <div key={t.id} className="flex items-center justify-between gap-3 text-xs leading-none">
+            <div
+              key={t.id}
+              className={cn(
+                "flex items-center justify-between gap-3 text-xs leading-none",
+                t.source === "excel_import" && "-mx-1.5 rounded bg-success-soft px-1.5 py-1",
+              )}
+              title={t.source === "excel_import" ? "Импортировано из Excel" : undefined}
+            >
               <span className="text-muted-foreground">{fmtDateTime(t.occurred_at)}</span>
               <span className={cn("font-medium tabular-nums", balanceTone(Number(t.amount)))}>
                 {t.currency === "KZT" ? fmtAmount(Number(t.amount)) + " ₸" : fmtUsd(Number(t.amount))}

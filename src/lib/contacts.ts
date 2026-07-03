@@ -180,6 +180,37 @@ export function useAddContactTransaction() {
   });
 }
 
+export function useImportContactBalancesFromExcel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      sheetLabel: string;
+      rows: { contactId: string; currency: "KZT" | "USD"; amount: number; rawName: string }[];
+    }): Promise<{ inserted: number }> => {
+      if (input.rows.length === 0) return { inserted: 0 };
+      const { error } = await supabase.from("contact_transactions").insert(
+        input.rows.map((r) => ({
+          contact_id: r.contactId,
+          currency: r.currency,
+          amount: r.amount,
+          note: `Импорт из Excel (лист ${input.sheetLabel}) — "${r.rawName}"`,
+          source: "excel_import",
+        })),
+      );
+      if (error) throw error;
+      return { inserted: input.rows.length };
+    },
+    onSuccess: (_data, vars) => {
+      const contactIds = new Set(vars.rows.map((r) => r.contactId));
+      for (const id of contactIds) {
+        qc.invalidateQueries({ queryKey: ["contact-detail", id] });
+        qc.invalidateQueries({ queryKey: ["contact-last5", id] });
+      }
+      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+    },
+  });
+}
+
 export function useDeleteContactTransaction() {
   const qc = useQueryClient();
   return useMutation({

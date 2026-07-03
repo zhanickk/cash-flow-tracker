@@ -12,6 +12,7 @@ import {
 import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
 import { ContactConversionDialog } from "@/components/contact-conversion-dialog";
+import { ContactsExcelImportDialog } from "@/components/contacts-excel-import-dialog";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -23,6 +24,7 @@ import {
   Users,
   Wallet,
   DollarSign,
+  FileSpreadsheet,
 } from "lucide-react";
 import {
   fmtAmount,
@@ -167,6 +169,7 @@ function ContactsPage() {
     { id: string; name: string } | undefined
   >(undefined);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [excelImportOpen, setExcelImportOpen] = useState(false);
 
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -236,6 +239,17 @@ function ContactsPage() {
           >
             <History className="h-4 w-4" />
             <span className="hidden sm:inline">История конвертаций</span>
+          </Button>
+        </div>
+        <div className="mx-auto flex max-w-3xl items-center gap-2 px-3 pb-3">
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full gap-1"
+            onClick={() => setExcelImportOpen(true)}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Импорт баланса из Excel
           </Button>
         </div>
       </header>
@@ -308,6 +322,12 @@ function ContactsPage() {
         onOpenChange={setConversionOpen}
         contacts={contacts ?? []}
         fixedContact={conversionFixedContact}
+      />
+
+      <ContactsExcelImportDialog
+        open={excelImportOpen}
+        onOpenChange={setExcelImportOpen}
+        contacts={contacts ?? []}
       />
 
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
