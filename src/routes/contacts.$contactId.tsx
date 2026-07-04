@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, ArrowLeftRight, ArrowRight, Plus } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ArrowRight, Minus, Plus } from "lucide-react";
 import {
   fmtAmount,
   fmtDateTime,
@@ -66,6 +66,7 @@ function ContactDetailPage() {
   const deleteConversion = useDeleteContactConversion();
 
   const [currency, setCurrency] = useState<"KZT" | "USD">("KZT");
+  const [direction, setDirection] = useState<"in" | "out">("in");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
 
@@ -85,8 +86,9 @@ function ContactDetailPage() {
   const { contact, transactions, kztBalance, usdBalance } = data;
 
   const submit = () => {
-    const n = parseFloat(amount.replace(/\s/g, "").replace(",", "."));
-    if (!n || isNaN(n)) return;
+    const raw = parseFloat(amount.replace(/\s/g, "").replace(",", "."));
+    if (!raw || isNaN(raw)) return;
+    const n = direction === "in" ? Math.abs(raw) : -Math.abs(raw);
     addTx.mutate({ contactId: contact.id, currency, amount: n, note: note.trim() || undefined });
     setAmount("");
     setNote("");
@@ -235,6 +237,36 @@ function ContactDetailPage() {
 
         <div className="mb-4 rounded-lg border border-border bg-card p-3">
           <div className="mb-2 text-sm font-medium">Новая операция</div>
+          <div className="mb-2 grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDirection("in")}
+              className={cn(
+                "gap-1.5 border-2",
+                direction === "in"
+                  ? "border-success bg-success text-success-foreground hover:bg-success/90"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent",
+              )}
+            >
+              <Plus className="h-4 w-4" />
+              Внёс
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDirection("out")}
+              className={cn(
+                "gap-1.5 border-2",
+                direction === "out"
+                  ? "border-danger bg-danger text-danger-foreground hover:bg-danger/90"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent",
+              )}
+            >
+              <Minus className="h-4 w-4" />
+              Забрал
+            </Button>
+          </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[0.8fr_1.4fr_1.2fr_auto]">
             <Select value={currency} onValueChange={(v) => setCurrency(v as "KZT" | "USD")}>
               <SelectTrigger>
@@ -246,7 +278,8 @@ function ContactDetailPage() {
               </SelectContent>
             </Select>
             <Input
-              placeholder="Сумма (- если забрал)"
+              placeholder="Сумма"
+              inputMode="decimal"
               className="min-w-0"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -258,13 +291,27 @@ function ContactDetailPage() {
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}
             />
-            <Button onClick={submit} className="gap-1">
-              <Plus className="h-4 w-4" />
+            <Button
+              onClick={submit}
+              className={cn(
+                "gap-1",
+                direction === "in"
+                  ? "bg-success text-success-foreground hover:bg-success/90"
+                  : "bg-danger text-danger-foreground hover:bg-danger/90",
+              )}
+            >
+              {direction === "in" ? (
+                <Plus className="h-4 w-4" />
+              ) : (
+                <Minus className="h-4 w-4" />
+              )}
               Добавить
             </Button>
           </div>
           <p className="mt-1.5 text-[11px] text-muted-foreground">
-            Положительная сумма = внёс (мы должны), отрицательная = забрал (должен нам)
+            {direction === "in"
+              ? "Внёс — увеличивает то, что мы должны контакту"
+              : "Забрал — контакт забрал деньги (мы должны меньше или контакт должен нам)"}
           </p>
         </div>
 
