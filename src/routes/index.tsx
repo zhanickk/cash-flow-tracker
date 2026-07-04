@@ -795,7 +795,7 @@ function DailyReportDialog({
           <DialogDescription>{data.dateTitle}</DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="min-h-0 flex-1 px-4 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           <div className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="rounded-lg border border-success/30 bg-success-soft p-3">
@@ -998,7 +998,7 @@ function DailyReportDialog({
               </div>
             </div>
           </div>
-        </ScrollArea>
+        </div>
 
         <DialogFooter className="border-t border-border px-4 py-3 sm:justify-between">
           <Button
