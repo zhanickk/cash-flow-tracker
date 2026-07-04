@@ -9,11 +9,17 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ContactsIndexRouteImport } from './routes/contacts.index'
 import { Route as ContactsContactIdRouteImport } from './routes/contacts.$contactId'
 
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
@@ -38,12 +44,14 @@ const ContactsContactIdRoute = ContactsContactIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/journal': typeof JournalRoute
+  '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/contacts/': typeof ContactsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/journal': typeof JournalRoute
+  '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/contacts': typeof ContactsIndexRoute
 }
@@ -51,26 +59,41 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/journal': typeof JournalRoute
+  '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
   '/contacts/': typeof ContactsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/journal' | '/contacts/$contactId' | '/contacts/'
+  fullPaths: '/' | '/journal' | '/login' | '/contacts/$contactId' | '/contacts/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/journal' | '/contacts/$contactId' | '/contacts'
-  id: '__root__' | '/' | '/journal' | '/contacts/$contactId' | '/contacts/'
+  to: '/' | '/journal' | '/login' | '/contacts/$contactId' | '/contacts'
+  id:
+    | '__root__'
+    | '/'
+    | '/journal'
+    | '/login'
+    | '/contacts/$contactId'
+    | '/contacts/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   JournalRoute: typeof JournalRoute
+  LoginRoute: typeof LoginRoute
   ContactsContactIdRoute: typeof ContactsContactIdRoute
   ContactsIndexRoute: typeof ContactsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/journal': {
       id: '/journal'
       path: '/journal'
@@ -105,6 +128,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   JournalRoute: JournalRoute,
+  LoginRoute: LoginRoute,
   ContactsContactIdRoute: ContactsContactIdRoute,
   ContactsIndexRoute: ContactsIndexRoute,
 }

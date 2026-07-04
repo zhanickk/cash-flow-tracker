@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { type Transaction, type HistoryEntry, txLabel } from "@/lib/cash-shared";
+import { getCachedCashierName } from "@/lib/auth";
 
 export type CashTxRow = Tables<"cash_transactions">;
 export type CashHistoryRow = Tables<"cash_register_history">;
@@ -30,6 +31,7 @@ function rowToHistory(r: CashHistoryRow): HistoryEntry {
     action: r.action as HistoryEntry["action"],
     kind: (r.kind as HistoryEntry["kind"]) ?? undefined,
     summary: r.summary,
+    cashierName: r.cashier_name ?? undefined,
   };
 }
 
@@ -70,6 +72,7 @@ async function insertHistory(entry: Omit<HistoryEntry, "id" | "ts">) {
     action: entry.action,
     kind: entry.kind ?? null,
     summary: entry.summary,
+    cashier_name: getCachedCashierName(),
   });
   if (error) throw error;
 }

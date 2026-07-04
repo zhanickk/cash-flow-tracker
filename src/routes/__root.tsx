@@ -5,9 +5,12 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useLocation,
+  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
+import { useSession } from "@/lib/auth";
 
 import appCss from "../styles.css?url";
 
@@ -168,6 +171,33 @@ function HideLovableBadge() {
   return null;
 }
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { session, loading } = useSession();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!session && location.pathname !== "/login") {
+      navigate({ to: "/login" });
+    }
+  }, [loading, session, location.pathname, navigate]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+        Загрузка...
+      </div>
+    );
+  }
+
+  if (!session && location.pathname !== "/login") {
+    return null;
+  }
+
+  return <>{children}</>;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
@@ -175,7 +205,9 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <HideLovableBadge />
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      <AuthGate>
+        <Outlet />
+      </AuthGate>
     </QueryClientProvider>
   );
 }

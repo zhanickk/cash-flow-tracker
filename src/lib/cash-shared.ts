@@ -37,6 +37,7 @@ export interface HistoryEntry {
   action: "add" | "edit" | "delete" | "reset";
   kind?: TxKind;
   summary: string;
+  cashierName?: string;
 }
 
 export function fmt(n: number, frac = 2) {

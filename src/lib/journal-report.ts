@@ -39,8 +39,9 @@ export async function buildJournalReportWorkbook(entries: HistoryEntry[]): Promi
     { width: 16 },
     { width: 16 },
     { width: 70 },
+    { width: 16 },
   ];
-  const header = ws.addRow(["Дата", "Время", "Действие", "Тип операции", "Описание"]);
+  const header = ws.addRow(["Дата", "Время", "Действие", "Тип операции", "Описание", "Кассир"]);
   header.eachCell((cell) => {
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A5F" } };
     cell.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
@@ -58,6 +59,7 @@ export async function buildJournalReportWorkbook(entries: HistoryEntry[]): Promi
       ACTION_LABEL[e.action] ?? e.action,
       e.kind ? (KIND_LABEL[e.kind] ?? e.kind) : "—",
       e.summary,
+      e.cashierName ?? "—",
     ]);
     row.eachCell((cell) => {
       cell.border = {

@@ -66,6 +66,9 @@ import {
   type DailyReportData,
 } from "@/lib/daily-report";
 import { buildSummaryReportWorkbook, summaryReportFileBaseName } from "@/lib/summary-report";
+import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
+import { CashierManagementDialog } from "@/components/cashier-management-dialog";
+import { LogOut } from "lucide-react";
 import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
 import {
@@ -244,6 +247,10 @@ function Index() {
   const [newDayPinError, setNewDayPinError] = useState("");
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const { session } = useSession();
+  const { data: currentCashier } = useCurrentCashier(session?.user?.id);
+  const cashierName = currentCashier?.name;
+  const logout = useLogout();
 
   const { data: contactsWithBalances = [] } = useContactsWithBalances();
   const deleteContactTx = useDeleteContactTransaction();
@@ -398,6 +405,18 @@ function Index() {
             <div className="text-center text-xs font-medium capitalize text-muted-foreground sm:text-sm">
               {todayStr()}
             </div>
+            <div className="flex items-center gap-1">
+              {cashierName && (
+                <span className="hidden text-xs font-medium text-muted-foreground sm:inline">
+                  {cashierName}
+                </span>
+              )}
+              <CashierManagementDialog />
+              <Button variant="ghost" size="sm" className="gap-2" onClick={() => logout.mutate()}>
+                <LogOut className="h-4 w-4" />
+                <span className="hidden sm:inline">Выйти</span>
+              </Button>
+            </div>
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2 sm:gap-3">
             {FX_CURRENCIES.map((c) => (
@@ -509,6 +528,11 @@ function Index() {
                                   : "СБРОС"}
                           </span>
                           <span className="text-foreground">{h.summary}</span>
+                          {h.cashierName && (
+                            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                              {h.cashierName}
+                            </span>
+                          )}
                         </li>
                       ))}
                     </ul>

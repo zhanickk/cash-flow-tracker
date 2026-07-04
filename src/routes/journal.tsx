@@ -143,6 +143,11 @@ function JournalPage() {
                       {ACTION_LABEL[h.action]}
                     </span>
                     <span className="text-foreground">{h.summary}</span>
+                    {h.cashierName && (
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                        {h.cashierName}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
