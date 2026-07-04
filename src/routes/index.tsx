@@ -412,10 +412,26 @@ function Index() {
                 </span>
               )}
               <CashierManagementDialog />
-              <Button variant="ghost" size="sm" className="gap-2" onClick={() => logout.mutate()}>
-                <LogOut className="h-4 w-4" />
-                <span className="hidden sm:inline">Выйти</span>
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="ghost" size="sm" className="gap-2">
+                    <LogOut className="h-4 w-4" />
+                    <span className="hidden sm:inline">Выйти</span>
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Выйти из системы?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Придётся заново войти по логину и паролю, чтобы продолжить работу с кассой.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Отмена</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => logout.mutate()}>Выйти</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </div>
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2 sm:gap-3">
