@@ -235,7 +235,7 @@ function ContactDetailPage() {
 
         <div className="mb-4 rounded-lg border border-border bg-card p-3">
           <div className="mb-2 text-sm font-medium">Новая операция</div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1.2fr_auto]">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[0.8fr_1.4fr_1.2fr_auto]">
             <Select value={currency} onValueChange={(v) => setCurrency(v as "KZT" | "USD")}>
               <SelectTrigger>
                 <SelectValue />
@@ -247,6 +247,7 @@ function ContactDetailPage() {
             </Select>
             <Input
               placeholder="Сумма (- если забрал)"
+              className="min-w-0"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}

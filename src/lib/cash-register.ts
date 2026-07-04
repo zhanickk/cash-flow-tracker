@@ -67,7 +67,7 @@ export function useCashHistory() {
 
 /* ============== History logging (internal) ============== */
 
-async function insertHistory(entry: Omit<HistoryEntry, "id" | "ts">) {
+export async function insertHistory(entry: Omit<HistoryEntry, "id" | "ts">) {
   const { error } = await supabase.from("cash_register_history").insert({
     action: entry.action,
     kind: entry.kind ?? null,

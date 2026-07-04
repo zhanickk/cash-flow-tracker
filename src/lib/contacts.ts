@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
+import { insertHistory } from "@/lib/cash-register";
 
 export type Contact = Tables<"contacts">;
 export type ContactTransaction = Tables<"contact_transactions">;
@@ -11,6 +12,14 @@ export interface ContactWithBalance extends Contact {
   usdBalance: number;
   lastActivityAt: string | null;
   txCount: number;
+}
+
+function journalAmount(currency: "KZT" | "USD", amount: number) {
+  const sign = amount > 0 ? "+" : amount < 0 ? "−" : "";
+  const abs = Math.abs(amount);
+  return currency === "KZT"
+    ? `${sign}${abs.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`
+    : `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
 function aggregateBalances(
@@ -167,9 +176,16 @@ export function useAddContactTransaction() {
           note: input.note ?? null,
           source: "app",
         })
-        .select("id")
+        .select("id, contacts(name)")
         .single();
       if (error) throw error;
+      const contactName = (data as unknown as { contacts: { name: string } | null }).contacts?.name ?? "—";
+      await insertHistory({
+        action: "add",
+        summary: `Контакт «${contactName}»: ${journalAmount(input.currency, input.amount)}${
+          input.note ? ` — ${input.note}` : ""
+        }`,
+      });
       return data;
     },
     onSuccess: (_data, vars) => {
@@ -219,10 +235,24 @@ export function useDeleteContactTransaction() {
         .from("contact_transactions")
         .delete()
         .eq("id", id)
-        .select("contact_id")
+        .select("contact_id, currency, amount, note, contacts(name)")
         .single();
       if (error) throw error;
-      return data;
+      const row = data as unknown as {
+        contact_id: string | null;
+        currency: "KZT" | "USD";
+        amount: number;
+        note: string | null;
+        contacts: { name: string } | null;
+      };
+      const contactName = row.contacts?.name ?? "—";
+      await insertHistory({
+        action: "delete",
+        summary: `Контакт «${contactName}»: удалена операция ${journalAmount(row.currency, Number(row.amount))}${
+          row.note ? ` — ${row.note}` : ""
+        }`,
+      });
+      return { contact_id: row.contact_id };
     },
     onSuccess: (data) => {
       if (data?.contact_id) {
@@ -326,7 +356,7 @@ export function useAddContactConversion() {
           to_amount: input.toAmount,
           rate: input.rate,
         })
-        .select("id")
+        .select("id, contacts(name)")
         .single();
       if (convErr) throw convErr;
       const note = conversionNote(input);
@@ -349,6 +379,12 @@ export function useAddContactConversion() {
         },
       ]);
       if (txErr) throw txErr;
+      const contactName =
+        (conversion as unknown as { contacts: { name: string } | null }).contacts?.name ?? "—";
+      await insertHistory({
+        action: "add",
+        summary: `Контакт «${contactName}»: ${note}`,
+      });
       return conversion;
     },
     onSuccess: (_data, vars) => {
@@ -369,10 +405,30 @@ export function useDeleteContactConversion() {
         .from("contact_conversions")
         .delete()
         .eq("id", id)
-        .select("contact_id")
+        .select("contact_id, from_currency, to_currency, from_amount, to_amount, contacts(name)")
         .single();
       if (error) throw error;
-      return data;
+      const row = data as unknown as {
+        contact_id: string;
+        from_currency: "KZT" | "USD";
+        to_currency: "KZT" | "USD";
+        from_amount: number;
+        to_amount: number;
+        contacts: { name: string } | null;
+      };
+      const contactName = row.contacts?.name ?? "—";
+      const note = conversionNote({
+        fromCurrency: row.from_currency,
+        toCurrency: row.to_currency,
+        fromAmount: Number(row.from_amount),
+        toAmount: Number(row.to_amount),
+        rate: 0,
+      }).replace(/\s*\(курс[^)]*\)/, "");
+      await insertHistory({
+        action: "delete",
+        summary: `Контакт «${contactName}»: удалена конвертация ${note}`,
+      });
+      return { contact_id: row.contact_id };
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["contact-detail", data.contact_id] });

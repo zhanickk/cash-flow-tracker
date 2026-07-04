@@ -46,9 +46,13 @@ export interface DailyReportData {
   fxRows: FxCurrencyRow[];
   totalFxMarginKzt: number;
   incomeByCurrency: Partial<Record<Currency, number>>;
+  regularIncomeByCurrency: Partial<Record<Currency, number>>;
+  personIncomeByCurrency: Partial<Record<Currency, number>>;
   regularExpenseByCurrency: Partial<Record<Currency, number>>;
   personExpenseByCurrency: Partial<Record<Currency, number>>;
   incomeKzt: number;
+  regularIncomeKzt: number;
+  personIncomeKzt: number;
   regularExpenseKzt: number;
   personExpenseKzt: number;
   netProfitKzt: number;
@@ -178,6 +182,19 @@ export function buildDailyReport(
 
   const totalFxMarginKzt = fxRows.reduce((s, r) => s + r.marginKzt, 0);
   const incomeByCurrency = sumByCurrency(transactions, (t) => t.kind === "income");
+  // "person"-tagged income is money deposited by/linked to a contact — it increases what we owe
+  // them (a liability), not real business profit. Only free-note income (not linked to any
+  // contact, expenseType "regular") is genuine revenue and should count toward net profit —
+  // this mirrors how expenses are already split into "regular" (real cost) vs "person" (payout,
+  // not a cost).
+  const regularIncomeByCurrency = sumByCurrency(
+    transactions,
+    (t) => t.kind === "income" && t.expenseType !== "person",
+  );
+  const personIncomeByCurrency = sumByCurrency(
+    transactions,
+    (t) => t.kind === "income" && t.expenseType === "person",
+  );
   const regularExpenseByCurrency = sumByCurrency(
     transactions,
     (t) => t.kind === "expense" && t.expenseType !== "person",
@@ -187,9 +204,11 @@ export function buildDailyReport(
     (t) => t.kind === "expense" && t.expenseType === "person",
   );
   const incomeKzt = incomeByCurrency.KZT || 0;
+  const regularIncomeKzt = regularIncomeByCurrency.KZT || 0;
+  const personIncomeKzt = personIncomeByCurrency.KZT || 0;
   const regularExpenseKzt = regularExpenseByCurrency.KZT || 0;
   const personExpenseKzt = personExpenseByCurrency.KZT || 0;
-  const netProfitKzt = totalFxMarginKzt - regularExpenseKzt;
+  const netProfitKzt = totalFxMarginKzt + regularIncomeKzt - regularExpenseKzt;
   const buyRows = transactions.filter((t) => t.kind === "buy");
   const sellRows = transactions.filter((t) => t.kind === "sell");
   const personRows = transactions.filter((t) => t.kind === "expense" && t.expenseType === "person");
@@ -248,9 +267,13 @@ export function buildDailyReport(
     fxRows,
     totalFxMarginKzt,
     incomeByCurrency,
+    regularIncomeByCurrency,
+    personIncomeByCurrency,
     regularExpenseByCurrency,
     personExpenseByCurrency,
     incomeKzt,
+    regularIncomeKzt,
+    personIncomeKzt,
     regularExpenseKzt,
     personExpenseKzt,
     netProfitKzt,
@@ -339,6 +362,7 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
   };
 
   addSummaryRow("Маржа обмена (KZT)", data.totalFxMarginKzt, "good");
+  addSummaryRow("Приход без привязки к контакту KZT", data.regularIncomeKzt, "good");
   addSummaryRow("Обычные расходы KZT", data.regularExpenseKzt, "bad");
   addSummaryRow(
     "Чистая прибыль дня (KZT)",
@@ -346,7 +370,7 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
     data.netProfitKzt >= 0 ? "good" : "bad",
   );
   r++;
-  addSummaryRow("Приходы KZT (инфо)", data.incomeKzt);
+  addSummaryRow("Приход от контактов KZT (инфо, не прибыль)", data.personIncomeKzt);
   addSummaryRow("Выдачи людям KZT (инфо)", data.personExpenseKzt);
 
   r += 1;

@@ -604,7 +604,7 @@ function Index() {
             </Link>
           </Button>
         </div>
-        <div className="grid gap-2 lg:col-span-2 sm:grid-cols-2">
+        <div className="lg:col-span-2">
           <Button
             variant="outline"
             className="w-full gap-2"
@@ -613,12 +613,6 @@ function Index() {
           >
             <FileSpreadsheet className="h-4 w-4" />
             {summaryBusy ? "Формируем…" : "Скачать сводку (контакты + касса)"}
-          </Button>
-          <Button variant="ghost" className="w-full gap-2" asChild>
-            <Link to="/journal">
-              <History className="h-4 w-4" />
-              Журнал изменений
-            </Link>
           </Button>
         </div>
         {!reportDoneToday && transactions.length > 0 && (
@@ -801,7 +795,7 @@ function DailyReportDialog({
           <DialogDescription>{data.dateTitle}</DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 px-4 py-3">
+        <ScrollArea className="min-h-0 flex-1 px-4 py-3">
           <div className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="rounded-lg border border-success/30 bg-success-soft p-3">
@@ -828,16 +822,22 @@ function DailyReportDialog({
                   {fmt(data.netProfitKzt)} ₸
                 </div>
                 <div className="mt-1 text-[10px] text-muted-foreground">
-                  маржа − обычные расходы KZT
+                  маржа + приход (без контакта) − обычные расходы KZT
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4">
+              <div className="rounded-md bg-success-soft p-2">
+                <div className="text-muted-foreground">Приход в прибыли</div>
+                <div className="font-semibold tabular-nums text-success">
+                  {fmt(data.regularIncomeKzt)}
+                </div>
+              </div>
               <div className="rounded-md bg-muted/60 p-2">
-                <div className="text-muted-foreground">Приходы KZT (инфо)</div>
+                <div className="text-muted-foreground">Приход от контактов (инфо)</div>
                 <div className="font-semibold tabular-nums text-muted-foreground">
-                  {fmt(data.incomeKzt)}
+                  {fmt(data.personIncomeKzt)}
                 </div>
               </div>
               <div className="rounded-md bg-muted/60 p-2">
@@ -847,7 +847,7 @@ function DailyReportDialog({
                 </div>
               </div>
               <div className="rounded-md bg-muted/60 p-2">
-                <div className="text-muted-foreground">Выдачи KZT</div>
+                <div className="text-muted-foreground">Выдачи KZT (инфо)</div>
                 <div className="font-semibold tabular-nums">{fmt(data.personExpenseKzt)}</div>
               </div>
             </div>
@@ -1322,9 +1322,13 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contact
               return (
                 <HoverCard openDelay={150} closeDelay={80}>
                   <HoverCardTrigger asChild>
-                    <span className="cursor-default font-medium text-primary underline decoration-1 underline-offset-2">
+                    <Link
+                      to="/contacts/$contactId"
+                      params={{ contactId: c.id }}
+                      className="font-medium text-primary underline decoration-1 underline-offset-2 hover:text-primary/80"
+                    >
                       {tx.name}
-                    </span>
+                    </Link>
                   </HoverCardTrigger>
                   <ContactBalanceHoverCard
                     contactId={c.id}
