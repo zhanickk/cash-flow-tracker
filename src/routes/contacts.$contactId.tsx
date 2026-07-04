@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { formatAmountInput, parseAmountInput } from "@/lib/cash-shared";
 import { ArrowLeft, ArrowLeftRight, ArrowRight, Minus, Plus } from "lucide-react";
 import {
   fmtAmount,
@@ -86,8 +87,8 @@ function ContactDetailPage() {
   const { contact, transactions, kztBalance, usdBalance } = data;
 
   const submit = () => {
-    const raw = parseFloat(amount.replace(/\s/g, "").replace(",", "."));
-    if (!raw || isNaN(raw)) return;
+    const raw = parseAmountInput(amount);
+    if (!raw) return;
     const n = direction === "in" ? Math.abs(raw) : -Math.abs(raw);
     addTx.mutate({ contactId: contact.id, currency, amount: n, note: note.trim() || undefined });
     setAmount("");
@@ -95,8 +96,8 @@ function ContactDetailPage() {
   };
 
   const toCurrency: "KZT" | "USD" = fromCurrency === "KZT" ? "USD" : "KZT";
-  const convAmountNum = parseFloat(convAmount.replace(/\s/g, "").replace(",", "."));
-  const convRateNum = parseFloat(convRate.replace(/\s/g, "").replace(",", "."));
+  const convAmountNum = parseAmountInput(convAmount);
+  const convRateNum = parseAmountInput(convRate);
   const convValid = convAmountNum > 0 && convRateNum > 0;
   const convToAmount = convValid
     ? fromCurrency === "USD"
@@ -183,7 +184,7 @@ function ContactDetailPage() {
               <Input
                 className="bg-card"
                 value={convAmount}
-                onChange={(e) => setConvAmount(e.target.value.replace(/[^\d.,]/g, ""))}
+                onChange={(e) => setConvAmount(formatAmountInput(e.target.value))}
                 placeholder="0"
               />
             </div>
@@ -192,7 +193,7 @@ function ContactDetailPage() {
               <Input
                 className="bg-card"
                 value={convRate}
-                onChange={(e) => setConvRate(e.target.value.replace(/[^\d.,]/g, ""))}
+                onChange={(e) => setConvRate(formatAmountInput(e.target.value))}
                 placeholder="0"
               />
             </div>
@@ -282,7 +283,7 @@ function ContactDetailPage() {
               inputMode="decimal"
               className="min-w-0"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => setAmount(formatAmountInput(e.target.value))}
               onKeyDown={(e) => e.key === "Enter" && submit()}
             />
             <Input

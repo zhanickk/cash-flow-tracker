@@ -20,6 +20,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowLeftRight, ArrowRight } from "lucide-react";
 import { useAddContactConversion, type ContactWithBalance } from "@/lib/contacts";
+import { formatAmountInput, parseAmountInput } from "@/lib/cash-shared";
 
 function fmtSide(currency: "KZT" | "USD", n: number) {
   if (!isFinite(n)) return "—";
@@ -60,8 +61,8 @@ export function ContactConversionDialog({
     return contacts.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 6);
   }, [contacts, query, fixedContact]);
 
-  const amountNum = parseFloat(amount.replace(/\s/g, "").replace(",", "."));
-  const rateNum = parseFloat(rate.replace(/\s/g, "").replace(",", "."));
+  const amountNum = parseAmountInput(amount);
+  const rateNum = parseAmountInput(rate);
   const valid = !!contact && amountNum > 0 && rateNum > 0;
   const toAmount = valid ? (fromCurrency === "USD" ? amountNum * rateNum : amountNum / rateNum) : 0;
 
@@ -165,7 +166,7 @@ export function ContactConversionDialog({
                   </div>
                   <Input
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value.replace(/[^\d.,]/g, ""))}
+                    onChange={(e) => setAmount(formatAmountInput(e.target.value))}
                     placeholder="0"
                   />
                 </div>
@@ -173,7 +174,7 @@ export function ContactConversionDialog({
                   <div className="mb-1 text-[11px] text-muted-foreground">Курс (₸ за $1)</div>
                   <Input
                     value={rate}
-                    onChange={(e) => setRate(e.target.value.replace(/[^\d.,]/g, ""))}
+                    onChange={(e) => setRate(formatAmountInput(e.target.value))}
                     placeholder="0"
                   />
                 </div>

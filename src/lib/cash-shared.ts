@@ -46,7 +46,35 @@ export function fmt(n: number, frac = 2) {
     minimumFractionDigits: 0,
     maximumFractionDigits: frac,
   });
-  return v.replace(/,/g, "_").replace(/\./g, ",").replace(/_/g, ".");
+  // Group thousands with a space and use a comma as the decimal separator —
+  // matches the convention already used across the rest of the site (contacts
+  // balances, journal entries, Excel exports all use ru-RU-style " "/"," ).
+  return v.replace(/,/g, "_").replace(/\./g, ",").replace(/_/g, " ");
+}
+
+/**
+ * Live-typing formatter for amount inputs: groups thousands with a space as
+ * the user types (e.g. "10000" -> "10 000"), keeps a single comma as the
+ * decimal separator. Used everywhere a person enters a monetary amount so
+ * large numbers stay easy to read while typing.
+ */
+export function formatAmountInput(s: string): string {
+  const raw = s.replace(/\s/g, "").replace(/[^\d,]/g, "");
+  const firstComma = raw.indexOf(",");
+  const intRaw = firstComma >= 0 ? raw.slice(0, firstComma) : raw;
+  const fracRaw = firstComma >= 0 ? raw.slice(firstComma + 1).replace(/,/g, "") : "";
+  const intNormalized = intRaw.replace(/^0+(?=\d)/, "");
+  const groupedInt = (intNormalized || "0").replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  if (firstComma >= 0) return `${groupedInt},${fracRaw}`;
+  return groupedInt === "0" && intRaw === "" ? "" : groupedInt;
+}
+
+/** Parses a (possibly space-grouped, comma-decimal) amount input string into a number. */
+export function parseAmountInput(s: string): number {
+  if (!s) return 0;
+  const cleaned = s.replace(/\s/g, "").replace(/\./g, "").replace(/,/g, ".");
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
 }
 
 export function txDeltas(tx: Transaction): Partial<Record<Currency, number>> {

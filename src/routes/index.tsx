@@ -123,7 +123,7 @@ function formatInputValue(s: string): string {
   const intRaw = firstComma >= 0 ? raw.slice(0, firstComma) : raw;
   const fracRaw = firstComma >= 0 ? raw.slice(firstComma + 1).replace(/,/g, "") : "";
   const intNormalized = intRaw.replace(/^0+(?=\d)/, "");
-  const groupedInt = (intNormalized || "0").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const groupedInt = (intNormalized || "0").replace(/\B(?=(\d{3})+(?!\d))/g, " ");
   if (firstComma >= 0) return `${groupedInt},${fracRaw}`;
   return groupedInt === "0" && intRaw === "" ? "" : groupedInt;
 }
