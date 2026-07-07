@@ -266,6 +266,7 @@ function invalidateCashAndSales(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: SALES_KEY });
   qc.invalidateQueries({ queryKey: TX_KEY });
   qc.invalidateQueries({ queryKey: HISTORY_KEY });
+  qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
 }
 
 /* ============== Mutations ============== */

@@ -37,6 +37,7 @@ export async function buildFxSalesReportWorkbook(input: {
   daily: FxDaySummary[];
   periodLabel: string;
   currencyLabels: Map<string, string>;
+  heldInKzt?: { currencyCode: string; label: string; foreignTotal: number; kztTotal: number; count: number }[];
 }): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Кассовый лист";
@@ -71,6 +72,23 @@ export async function buildFxSalesReportWorkbook(input: {
     r.getCell(2).numFmt = "#,##0.00";
     r.getCell(3).numFmt = "#,##0.00";
     r.getCell(4).numFmt = "#,##0.0000";
+  }
+
+  if (input.heldInKzt?.length) {
+    const heldWs = wb.addWorksheet("Держим в тенге", {
+      properties: { tabColor: { argb: "FFCA8A04" } },
+    });
+    heldWs.columns = [{ width: 22 }, { width: 18 }, { width: 18 }, { width: 10 }];
+    heldWs.addRow([`Период: ${input.periodLabel}`]).font = { bold: true };
+    heldWs.addRow([]);
+    const hh = heldWs.addRow(["Валюта", "Продано (валюта)", "Сумма (₸)", "Операций"]);
+    styleHeader(hh);
+    for (const row of input.heldInKzt) {
+      const r = heldWs.addRow([row.label, row.foreignTotal, row.kztTotal, row.count]);
+      borderRow(r);
+      r.getCell(2).numFmt = "#,##0.00";
+      r.getCell(3).numFmt = "#,##0.00";
+    }
   }
 
   const dailyWs = wb.addWorksheet("По дням", {

@@ -261,6 +261,44 @@ export type Database = {
         }
         Relationships: []
       }
+      fx_currency_holdings: {
+        Row: {
+          created_at: string
+          currency_code: string
+          debt_amount: number
+          id: string
+          note: string | null
+          total_received: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          currency_code: string
+          debt_amount?: number
+          id?: string
+          note?: string | null
+          total_received?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          currency_code?: string
+          debt_amount?: number
+          id?: string
+          note?: string | null
+          total_received?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fx_currency_holdings_currency_code_fkey"
+            columns: ["currency_code"]
+            isOneToOne: false
+            referencedRelation: "fx_currencies"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
       fx_currencies: {
         Row: {
           code: string

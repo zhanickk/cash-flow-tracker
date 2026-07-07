@@ -110,6 +110,7 @@ export function useAddCashTransaction() {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
       qc.invalidateQueries({ queryKey: ["fx-sales"] });
+      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
     },
   });
 }
@@ -160,6 +161,7 @@ export function useUpdateCashTransaction() {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
       qc.invalidateQueries({ queryKey: ["fx-sales"] });
+      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
     },
   });
 }
@@ -186,6 +188,7 @@ export function useDeleteCashTransaction() {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
       qc.invalidateQueries({ queryKey: ["fx-sales"] });
+      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
     },
   });
 }
@@ -205,6 +208,7 @@ export function useResetCashRegister() {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
       qc.invalidateQueries({ queryKey: ["fx-sales"] });
+      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
     },
   });
 }
@@ -239,6 +243,7 @@ export function useNewDayCashRegister() {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
       qc.invalidateQueries({ queryKey: ["fx-sales"] });
+      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
     },
   });
 }

@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
   Check,
+  Wallet,
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,7 @@ import {
   fxSalesReportFileBaseName,
   periodLabelFromFilters,
 } from "@/lib/fx-sales-report";
+import { heldInKztSummary } from "@/lib/currency-balance";
 
 export const Route = createFileRoute("/fx-sales")({
   head: () => ({
@@ -119,6 +121,10 @@ function FxSalesPage() {
   );
   const daily = useMemo(() => aggregateByDay(filtered), [filtered]);
   const totalKzt = useMemo(() => summary.reduce((s, r) => s + r.kztTotal, 0), [summary]);
+  const heldInKzt = useMemo(
+    () => heldInKztSummary(filtered, currencies),
+    [filtered, currencies],
+  );
 
   const previewKzt = useMemo(() => {
     const a = parseAmountInput(foreignAmount);
@@ -176,6 +182,7 @@ function FxSalesPage() {
         daily,
         periodLabel: periodLabelFromFilters(filters),
         currencyLabels,
+        heldInKzt,
       });
       const baseName = fxSalesReportFileBaseName();
       await saveExcelToDirectory(buffer, baseName);
@@ -206,6 +213,12 @@ function FxSalesPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" className="gap-1" asChild>
+              <Link to="/currency-balance">
+                <Wallet className="h-4 w-4" />
+                Баланс валют
+              </Link>
+            </Button>
             <Button
               size="sm"
               variant="outline"
@@ -402,6 +415,36 @@ function FxSalesPage() {
             </CardContent>
           </Card>
         </div>
+
+        {heldInKzt.length > 0 && (
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Держим в тенге (за период)</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2">Валюта</th>
+                    <th className="px-3 py-2">Продано (валюта)</th>
+                    <th className="px-3 py-2">Сумма ₸</th>
+                    <th className="px-3 py-2">Оп.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {heldInKzt.map((row) => (
+                    <tr key={row.currencyCode} className="border-b border-border/60">
+                      <td className="px-3 py-2 font-medium">{row.label}</td>
+                      <td className="px-3 py-2 tabular-nums">{fmt(row.foreignTotal)}</td>
+                      <td className="px-3 py-2 tabular-nums text-success">{fmt(row.kztTotal)} ₸</td>
+                      <td className="px-3 py-2 tabular-nums">{row.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        )}
 
         {daily.length > 1 && (
           <Card className="print:break-inside-avoid">
