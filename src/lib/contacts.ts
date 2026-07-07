@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
+import { nameKey } from "@/lib/contacts-excel-import";
 import type { Currency } from "@/lib/cash-shared";
 import {
   computeBalancesFromAmounts,
@@ -279,9 +280,11 @@ export function useImportContactBalancesFromExcel() {
       const contactList = contacts ?? [];
       const txs = allTxs ?? [];
 
-      const contactByKey = new Map(
-        contactList.map((c) => [c.name.trim().toLowerCase(), c]),
-      );
+      const contactByKey = new Map<string, Contact>();
+      for (const c of contactList) {
+        const key = nameKey(c.name);
+        if (!contactByKey.has(key)) contactByKey.set(key, c);
+      }
 
       const txsByContact = new Map<string, ContactTransaction[]>();
       for (const t of txs) {
@@ -298,7 +301,24 @@ export function useImportContactBalancesFromExcel() {
           .reduce((s, t) => s + Number(t.amount), 0);
       }
 
-      const namesOnSheet = new Set(input.targets.map((t) => t.normalizedName.toLowerCase()));
+      function applyPendingDelta(contactId: string, currency: string, delta: number) {
+        const list = txsByContact.get(contactId) ?? [];
+        list.push({
+          contact_id: contactId,
+          currency,
+          amount: delta,
+        } as ContactTransaction);
+        txsByContact.set(contactId, list);
+      }
+
+      const targetsByPersonCurrency = new Map<string, ExcelBalanceTarget>();
+      for (const target of input.targets) {
+        targetsByPersonCurrency.set(`${nameKey(target.normalizedName)}:${target.currency}`, target);
+      }
+
+      const namesOnSheet = new Set(
+        [...targetsByPersonCurrency.values()].map((t) => nameKey(t.normalizedName)),
+      );
       const inserts: {
         contact_id: string;
         currency: string;
@@ -309,8 +329,9 @@ export function useImportContactBalancesFromExcel() {
 
       let created = 0;
 
-      for (const target of input.targets) {
-        let contact = contactByKey.get(target.normalizedName.toLowerCase());
+      for (const target of targetsByPersonCurrency.values()) {
+        const key = nameKey(target.normalizedName);
+        let contact = contactByKey.get(key);
         if (!contact) {
           const { data: newContact, error: createErr } = await supabase
             .from("contacts")
@@ -319,7 +340,7 @@ export function useImportContactBalancesFromExcel() {
             .single();
           if (createErr) throw createErr;
           contact = newContact;
-          contactByKey.set(target.normalizedName.toLowerCase(), contact);
+          contactByKey.set(key, contact);
           contactList.push(contact);
           txsByContact.set(contact.id, []);
           created++;
@@ -336,10 +357,11 @@ export function useImportContactBalancesFromExcel() {
           note: `Сверка баланса из Excel (лист ${input.sheetLabel}) — «${target.rawName}»: ${current.toLocaleString("ru-RU")} → ${target.targetBalance.toLocaleString("ru-RU")}`,
           source: "excel_import",
         });
+        applyPendingDelta(contact.id, target.currency, delta);
       }
 
       for (const contact of contactList) {
-        if (namesOnSheet.has(contact.name.trim().toLowerCase())) continue;
+        if (namesOnSheet.has(nameKey(contact.name))) continue;
 
         const contactTxs = txsByContact.get(contact.id) ?? [];
         const balances = computeBalancesFromAmounts(contactTxs);
@@ -365,7 +387,11 @@ export function useImportContactBalancesFromExcel() {
         summary: `Импорт Excel (лист ${input.sheetLabel}): сверка ${inserts.length} счетов, создано контактов ${created}`,
       });
 
-      return { reconciled: inserts.length, created, zeroed: contactList.filter((c) => !namesOnSheet.has(c.name.trim().toLowerCase())).length };
+      return {
+        reconciled: inserts.length,
+        created,
+        zeroed: contactList.filter((c) => !namesOnSheet.has(nameKey(c.name))).length,
+      };
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contact-detail"] });
