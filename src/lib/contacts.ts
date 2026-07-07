@@ -2,24 +2,32 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
+import type { Currency } from "@/lib/cash-shared";
+import {
+  computeBalancesFromAmounts,
+  emptyBalances,
+  fmtContactBalancePlain,
+  openCurrencies,
+  type ContactCurrency,
+} from "@/lib/contact-currencies";
 
 export type Contact = Tables<"contacts">;
 export type ContactTransaction = Tables<"contact_transactions">;
 export type ContactConversion = Tables<"contact_conversions">;
 
 export interface ContactWithBalance extends Contact {
+  balances: Record<ContactCurrency, number>;
+  /** @deprecated use balances.KZT */
   kztBalance: number;
+  /** @deprecated use balances.USD */
   usdBalance: number;
+  activeCurrencies: ContactCurrency[];
   lastActivityAt: string | null;
   txCount: number;
 }
 
-function journalAmount(currency: "KZT" | "USD", amount: number) {
-  const sign = amount > 0 ? "+" : amount < 0 ? "−" : "";
-  const abs = Math.abs(amount);
-  return currency === "KZT"
-    ? `${sign}${abs.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`
-    : `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+function journalAmount(currency: string, amount: number) {
+  return fmtContactBalancePlain(currency, amount);
 }
 
 function aggregateBalances(
@@ -35,15 +43,20 @@ function aggregateBalances(
   }
   return contacts.map((c) => {
     const list = byContact.get(c.id) ?? [];
-    let kztBalance = 0;
-    let usdBalance = 0;
+    const balances = computeBalancesFromAmounts(list);
     let lastActivityAt: string | null = null;
     for (const t of list) {
-      if (t.currency === "KZT") kztBalance += Number(t.amount);
-      else if (t.currency === "USD") usdBalance += Number(t.amount);
       if (!lastActivityAt || t.occurred_at > lastActivityAt) lastActivityAt = t.occurred_at;
     }
-    return { ...c, kztBalance, usdBalance, lastActivityAt, txCount: list.length };
+    return {
+      ...c,
+      balances,
+      kztBalance: balances.KZT,
+      usdBalance: balances.USD,
+      activeCurrencies: openCurrencies(balances),
+      lastActivityAt,
+      txCount: list.length,
+    };
   });
 }
 
@@ -80,13 +93,15 @@ export function useContactDetail(contactId: string | undefined) {
       if (cErr) throw cErr;
       if (tErr) throw tErr;
       const list = txs ?? [];
-      let kztBalance = 0;
-      let usdBalance = 0;
-      for (const t of list) {
-        if (t.currency === "KZT") kztBalance += Number(t.amount);
-        else if (t.currency === "USD") usdBalance += Number(t.amount);
-      }
-      return { contact: contact as Contact, transactions: list, kztBalance, usdBalance };
+      const balances = computeBalancesFromAmounts(list);
+      return {
+        contact: contact as Contact,
+        transactions: list,
+        balances,
+        kztBalance: balances.KZT,
+        usdBalance: balances.USD,
+        activeCurrencies: openCurrencies(balances),
+      };
     },
   });
 }
@@ -163,7 +178,7 @@ export function useAddContactTransaction() {
   return useMutation({
     mutationFn: async (input: {
       contactId: string;
-      currency: "KZT" | "USD";
+      currency: Currency;
       amount: number;
       note?: string;
     }): Promise<{ id: string }> => {
@@ -196,32 +211,165 @@ export function useAddContactTransaction() {
   });
 }
 
+export function useUpdateContactTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      id: string;
+      contactId: string;
+      currency?: Currency;
+      amount?: number;
+    }) => {
+      const patch: { currency?: string; amount?: number } = {};
+      if (input.currency !== undefined) patch.currency = input.currency;
+      if (input.amount !== undefined) patch.amount = input.amount;
+      if (Object.keys(patch).length === 0) return;
+
+      const { data, error } = await supabase
+        .from("contact_transactions")
+        .update(patch)
+        .eq("id", input.id)
+        .select("currency, amount, note, contacts(name)")
+        .single();
+      if (error) throw error;
+
+      const row = data as unknown as {
+        currency: string;
+        amount: number;
+        note: string | null;
+        contacts: { name: string } | null;
+      };
+      const contactName = row.contacts?.name ?? "—";
+      await insertHistory({
+        action: "edit",
+        summary: `Контакт «${contactName}»: изменена операция → ${journalAmount(row.currency, Number(row.amount))}${
+          row.note ? ` — ${row.note}` : ""
+        }`,
+      });
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["contact-detail", vars.contactId] });
+      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+      qc.invalidateQueries({ queryKey: ["contact-last5", vars.contactId] });
+    },
+  });
+}
+
+export interface ExcelBalanceTarget {
+  rawName: string;
+  normalizedName: string;
+  currency: "KZT" | "USD";
+  targetBalance: number;
+}
+
 export function useImportContactBalancesFromExcel() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: {
       sheetLabel: string;
-      rows: { contactId: string; currency: "KZT" | "USD"; amount: number; rawName: string }[];
-    }): Promise<{ inserted: number }> => {
-      if (input.rows.length === 0) return { inserted: 0 };
-      const { error } = await supabase.from("contact_transactions").insert(
-        input.rows.map((r) => ({
-          contact_id: r.contactId,
-          currency: r.currency,
-          amount: r.amount,
-          note: `Импорт из Excel (лист ${input.sheetLabel}) — "${r.rawName}"`,
-          source: "excel_import",
-        })),
+      targets: ExcelBalanceTarget[];
+    }): Promise<{ reconciled: number; created: number; zeroed: number }> => {
+      const [{ data: contacts, error: cErr }, { data: allTxs, error: tErr }] = await Promise.all([
+        supabase.from("contacts").select("*"),
+        supabase.from("contact_transactions").select("*"),
+      ]);
+      if (cErr) throw cErr;
+      if (tErr) throw tErr;
+
+      const contactList = contacts ?? [];
+      const txs = allTxs ?? [];
+
+      const contactByKey = new Map(
+        contactList.map((c) => [c.name.trim().toLowerCase(), c]),
       );
-      if (error) throw error;
-      return { inserted: input.rows.length };
-    },
-    onSuccess: (_data, vars) => {
-      const contactIds = new Set(vars.rows.map((r) => r.contactId));
-      for (const id of contactIds) {
-        qc.invalidateQueries({ queryKey: ["contact-detail", id] });
-        qc.invalidateQueries({ queryKey: ["contact-last5", id] });
+
+      const txsByContact = new Map<string, ContactTransaction[]>();
+      for (const t of txs) {
+        if (!t.contact_id) continue;
+        const list = txsByContact.get(t.contact_id) ?? [];
+        list.push(t);
+        txsByContact.set(t.contact_id, list);
       }
+
+      function currentBalance(contactId: string, currency: string) {
+        const list = txsByContact.get(contactId) ?? [];
+        return list
+          .filter((t) => t.currency === currency)
+          .reduce((s, t) => s + Number(t.amount), 0);
+      }
+
+      const namesOnSheet = new Set(input.targets.map((t) => t.normalizedName.toLowerCase()));
+      const inserts: {
+        contact_id: string;
+        currency: string;
+        amount: number;
+        note: string;
+        source: string;
+      }[] = [];
+
+      let created = 0;
+
+      for (const target of input.targets) {
+        let contact = contactByKey.get(target.normalizedName.toLowerCase());
+        if (!contact) {
+          const { data: newContact, error: createErr } = await supabase
+            .from("contacts")
+            .insert({ name: target.normalizedName })
+            .select("*")
+            .single();
+          if (createErr) throw createErr;
+          contact = newContact;
+          contactByKey.set(target.normalizedName.toLowerCase(), contact);
+          contactList.push(contact);
+          txsByContact.set(contact.id, []);
+          created++;
+        }
+
+        const current = currentBalance(contact.id, target.currency);
+        const delta = target.targetBalance - current;
+        if (Math.abs(delta) < 0.0001) continue;
+
+        inserts.push({
+          contact_id: contact.id,
+          currency: target.currency,
+          amount: delta,
+          note: `Сверка баланса из Excel (лист ${input.sheetLabel}) — «${target.rawName}»: ${current.toLocaleString("ru-RU")} → ${target.targetBalance.toLocaleString("ru-RU")}`,
+          source: "excel_import",
+        });
+      }
+
+      for (const contact of contactList) {
+        if (namesOnSheet.has(contact.name.trim().toLowerCase())) continue;
+
+        const contactTxs = txsByContact.get(contact.id) ?? [];
+        const balances = computeBalancesFromAmounts(contactTxs);
+        for (const [currency, balance] of Object.entries(balances)) {
+          if (Math.abs(balance) < 0.0001) continue;
+          inserts.push({
+            contact_id: contact.id,
+            currency,
+            amount: -balance,
+            note: `Сверка: контакт отсутствует на листе Excel (лист ${input.sheetLabel}) — обнуление`,
+            source: "excel_import",
+          });
+        }
+      }
+
+      if (inserts.length > 0) {
+        const { error } = await supabase.from("contact_transactions").insert(inserts);
+        if (error) throw error;
+      }
+
+      await insertHistory({
+        action: "add",
+        summary: `Импорт Excel (лист ${input.sheetLabel}): сверка ${inserts.length} счетов, создано контактов ${created}`,
+      });
+
+      return { reconciled: inserts.length, created, zeroed: contactList.filter((c) => !namesOnSheet.has(c.name.trim().toLowerCase())).length };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contact-detail"] });
+      qc.invalidateQueries({ queryKey: ["contact-last5"] });
       qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
     },
   });
@@ -240,7 +388,7 @@ export function useDeleteContactTransaction() {
       if (error) throw error;
       const row = data as unknown as {
         contact_id: string | null;
-        currency: "KZT" | "USD";
+        currency: string;
         amount: number;
         note: string | null;
         contacts: { name: string } | null;
@@ -479,3 +627,5 @@ export function fmtUsd(n: number) {
   const abs = Math.abs(n);
   return sign + "$" + abs.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
+
+export { fmtContactBalancePlain as fmtContactAmount, emptyBalances };

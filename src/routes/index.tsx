@@ -76,6 +76,7 @@ import {
   useAddContactTransaction,
   useContactsWithBalances,
   useDeleteContactTransaction,
+  useUpdateContactTransaction,
   type ContactWithBalance,
 } from "@/lib/contacts";
 import {
@@ -254,6 +255,7 @@ function Index() {
 
   const { data: contactsWithBalances = [] } = useContactsWithBalances();
   const deleteContactTx = useDeleteContactTransaction();
+  const updateContactTx = useUpdateContactTransaction();
   const contactMap = useMemo(() => {
     const m = new Map<string, ContactWithBalance>();
     for (const c of contactsWithBalances) m.set(c.name.trim().toLowerCase(), c);
@@ -299,10 +301,35 @@ function Index() {
     addCashTx.mutate(full);
   }
 
-  function updateTx(id: string, patch: Partial<Transaction>) {
+  async function updateTx(id: string, patch: Partial<Transaction>) {
     const old = transactions.find((t) => t.id === id);
     if (!old) return;
-    updateCashTx.mutate({ id, patch, old });
+    await updateCashTx.mutateAsync({ id, patch, old });
+
+    const isLinkedContact =
+      old.contactTxId &&
+      ((old.kind === "income" && old.expenseType !== "regular") ||
+        (old.kind === "expense" && old.expenseType === "person"));
+    if (!isLinkedContact) return;
+
+    const newAmount = patch.amount ?? old.amount;
+    const newCurrency = patch.currency ?? old.currency;
+    const signedAmount = old.kind === "income" ? newAmount : -newAmount;
+    const contactId = old.name?.trim()
+      ? contactMap.get(old.name.trim().toLowerCase())?.id
+      : undefined;
+    if (!contactId) return;
+
+    try {
+      await updateContactTx.mutateAsync({
+        id: old.contactTxId!,
+        contactId,
+        amount: signedAmount,
+        currency: newCurrency,
+      });
+    } catch {
+      // касса обновлена; синхронизацию с контактом можно повторить вручную
+    }
   }
 
   function deleteTx(id: string) {
@@ -1221,15 +1248,16 @@ function SectionCard({
 
 interface RowProps {
   tx: Transaction;
-  onUpdate: (id: string, patch: Partial<Transaction>) => void;
+  onUpdate: (id: string, patch: Partial<Transaction>) => void | Promise<void>;
   onDelete: (id: string) => void;
   withRate?: boolean;
   withName?: boolean;
+  lockName?: boolean;
   excludeKzt?: boolean;
   contactMap?: Map<string, ContactWithBalance>;
 }
 
-function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contactMap }: RowProps) {
+function TxRow({ tx, onUpdate, onDelete, withRate, withName, lockName, excludeKzt, contactMap }: RowProps) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(tx.name ?? "");
   const [currency, setCurrency] = useState<Currency>(tx.currency);
@@ -1249,8 +1277,8 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contact
     const r = parseRate(rate);
     if (a <= 0) return;
     if (withRate && r <= 0) return;
-    onUpdate(tx.id, {
-      name: withName ? name.trim() || undefined : tx.name,
+    void onUpdate(tx.id, {
+      name: withName && !lockName ? name.trim() || undefined : tx.name,
       currency,
       amount: a,
       rate: withRate ? r : undefined,
@@ -1261,7 +1289,12 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contact
   if (editing) {
     return (
       <li className="space-y-2 bg-accent/40 px-3 py-2">
-        {withName && (
+        {withName && lockName && tx.name && (
+          <div className="rounded-md border border-border bg-muted/50 px-2 py-1.5 text-xs font-medium text-foreground">
+            {tx.name}
+          </div>
+        )}
+        {withName && !lockName && (
           <FlowInput
             ref={nameRef}
             value={name}
@@ -1349,8 +1382,8 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, excludeKzt, contact
                   <ContactBalanceHoverCard
                     contactId={c.id}
                     name={c.name}
-                    kztBalance={c.kztBalance}
-                    usdBalance={c.usdBalance}
+                    balances={c.balances}
+                    activeCurrencies={c.activeCurrencies}
                     txCount={c.txCount}
                     lastActivityAt={c.lastActivityAt}
                   />
@@ -1708,7 +1741,7 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: Co
       name: trimmed || undefined,
       expenseType: freeMode ? "regular" : "person",
     });
-    if (!freeMode && trimmed && (currency === "KZT" || currency === "USD")) {
+    if (!freeMode && trimmed) {
       try {
         const contactId = await findOrCreateContactByName(trimmed);
         const row = await addContactTx.mutateAsync({
@@ -1775,6 +1808,7 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: Co
         onUpdate={onUpdate}
         onDelete={onDelete}
         withName
+        lockName
         contactMap={contactMap}
       />
     </SectionCard>
@@ -1812,7 +1846,7 @@ function ExpenseCombinedCard({
       name: trimmed || undefined,
       expenseType: freeMode ? "regular" : "person",
     });
-    if (!freeMode && trimmed && (currency === "KZT" || currency === "USD")) {
+    if (!freeMode && trimmed) {
       try {
         const contactId = await findOrCreateContactByName(trimmed);
         const row = await addContactTx.mutateAsync({
@@ -1876,6 +1910,7 @@ function ExpenseCombinedCard({
         onUpdate={onUpdate}
         onDelete={onDelete}
         withName
+        lockName
         contactMap={contactMap}
       />
     </SectionCard>

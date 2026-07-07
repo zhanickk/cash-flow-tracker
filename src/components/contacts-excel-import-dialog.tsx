@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileSpreadsheet, Upload, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { FileSpreadsheet, Upload, CheckCircle2, XCircle, AlertTriangle, UserPlus } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,16 +27,12 @@ import {
   type ParsedBalanceRow,
 } from "@/lib/contacts-excel-import";
 import { useImportContactBalancesFromExcel, type ContactWithBalance } from "@/lib/contacts";
+import { fmtContactBalancePlain } from "@/lib/contact-currencies";
 
 interface PreviewRow extends ParsedBalanceRow {
   matchedContactId: string | null;
   matchedContactName: string | null;
-}
-
-function fmtAmountShort(n: number, currency: "KZT" | "USD") {
-  const abs = Math.abs(n).toLocaleString("ru-RU");
-  const sign = n >= 0 ? "+" : "-";
-  return currency === "KZT" ? `${sign}${abs} ₸` : `${sign}$${abs}`;
+  isNew: boolean;
 }
 
 export function ContactsExcelImportDialog({
@@ -78,6 +74,7 @@ export function ContactsExcelImportDialog({
           ...r,
           matchedContactId: match?.id ?? null,
           matchedContactName: match?.name ?? null,
+          isNew: !match,
         };
       });
       setSheetName(result.sheetName);
@@ -89,25 +86,28 @@ export function ContactsExcelImportDialog({
     }
   }
 
-  const matchedRows = (rows ?? []).filter((r) => r.matchedContactId);
-  const skippedRows = (rows ?? []).filter((r) => !r.matchedContactId);
+  const namesOnSheet = new Set((rows ?? []).map((r) => nameKey(r.normalizedName)));
+  const zeroedContacts = contacts.filter((c) => !namesOnSheet.has(nameKey(c.name)));
+  const newRows = (rows ?? []).filter((r) => r.isNew);
+  const existingRows = (rows ?? []).filter((r) => !r.isNew);
 
   function handleConfirmImport() {
+    if (!rows) return;
     importMutation.mutate(
       {
         sheetLabel: sheetName,
-        rows: matchedRows.map((r) => ({
-          contactId: r.matchedContactId as string,
-          currency: r.currency,
-          amount: r.amount,
+        targets: rows.map((r) => ({
           rawName: r.rawName,
+          normalizedName: r.normalizedName,
+          currency: r.currency,
+          targetBalance: r.amount,
         })),
       },
       {
         onSuccess: (data) => {
           setConfirmOpen(false);
           setResultMsg(
-            `Импортировано операций: ${data.inserted}. Пропущено (не найдено в контактах): ${skippedRows.length}.`,
+            `Сверка выполнена: ${data.reconciled} корректировок, создано контактов: ${data.created}, обнулено: ${data.zeroed}.`,
           );
           setRows(null);
         },
@@ -131,9 +131,9 @@ export function ContactsExcelImportDialog({
               Импорт баланса из Excel
             </DialogTitle>
             <DialogDescription>
-              Загрузите файл — возьмём последний лист и блок «Остаток» (тенге плюс/минус, доллар
-              САЛЫНГАН/КАРЫЗ). Обновятся только контакты, уже существующие в базе — для каждого
-              добавится отдельная операция (не перезаписывая историю).
+              Берём последний лист (плюс/минус/САЛЫНГАН/КАРЫЗ). Суммы — это итоговый баланс
+              контакта, не дополнительная операция. Новые имена будут созданы. Контакты, которых
+              нет на листе, будут обнулены (не удалены).
             </DialogDescription>
           </DialogHeader>
 
@@ -175,47 +175,55 @@ export function ContactsExcelImportDialog({
 
           {rows && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <span>
                   Лист: <span className="font-medium text-foreground">{sheetName}</span>
                 </span>
                 <span>
-                  Найдено строк: {rows.length} · Совпадений:{" "}
-                  <span className="font-medium text-success">{matchedRows.length}</span> · Не
-                  найдено: <span className="font-medium text-danger">{skippedRows.length}</span>
+                  Строк: {rows.length} · Существующие:{" "}
+                  <span className="font-medium text-foreground">{existingRows.length}</span> ·
+                  Новые: <span className="font-medium text-primary">{newRows.length}</span> ·
+                  Обнулить: <span className="font-medium text-danger">{zeroedContacts.length}</span>
                 </span>
               </div>
-              <ScrollArea className="h-72 rounded-md border border-border">
+              <ScrollArea className="h-56 rounded-md border border-border">
                 <ul className="divide-y divide-border">
                   {rows.map((r, i) => (
                     <li key={i} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
                       <div className="flex min-w-0 items-center gap-2">
-                        {r.matchedContactId ? (
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                        {r.isNew ? (
+                          <UserPlus className="h-3.5 w-3.5 shrink-0 text-primary" />
                         ) : (
-                          <XCircle className="h-3.5 w-3.5 shrink-0 text-danger" />
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
                         )}
                         <div className="min-w-0">
                           <div className="truncate font-medium">{r.rawName}</div>
                           <div className="truncate text-muted-foreground">
-                            {r.matchedContactId
-                              ? `→ ${r.matchedContactName}`
-                              : "не найден в контактах, пропущено"}
+                            {r.isNew
+                              ? `→ создать «${r.normalizedName}»`
+                              : `→ ${r.matchedContactName}`}
+                            {" · "}итог: {fmtContactBalancePlain(r.currency, r.amount)}
                           </div>
                         </div>
                       </div>
-                      <span
-                        className={cn(
-                          "shrink-0 font-medium tabular-nums",
-                          r.amount >= 0 ? "text-success" : "text-danger",
-                        )}
-                      >
-                        {fmtAmountShort(r.amount, r.currency)}
-                      </span>
                     </li>
                   ))}
                 </ul>
               </ScrollArea>
+              {zeroedContacts.length > 0 && (
+                <div className="rounded-md border border-border bg-muted/40 p-2 text-xs">
+                  <div className="mb-1 font-medium text-muted-foreground">
+                    Будут обнулены (нет на листе):
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {zeroedContacts.map((c) => (
+                      <span key={c.id} className="rounded bg-card px-1.5 py-0.5">
+                        {c.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -228,11 +236,11 @@ export function ContactsExcelImportDialog({
             {rows && (
               <Button
                 onClick={() => setConfirmOpen(true)}
-                disabled={matchedRows.length === 0 || importMutation.isPending}
+                disabled={rows.length === 0 || importMutation.isPending}
                 className="gap-2"
               >
                 <Upload className="h-4 w-4" />
-                Импортировать ({matchedRows.length})
+                Сверить балансы
               </Button>
             )}
           </DialogFooter>
@@ -242,17 +250,17 @@ export function ContactsExcelImportDialog({
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Подтвердить импорт?</AlertDialogTitle>
+            <AlertDialogTitle>Подтвердить сверку балансов?</AlertDialogTitle>
             <AlertDialogDescription>
-              Будет добавлено {matchedRows.length} операций (по одной на каждый совпавший контакт)
-              с пометкой «Импорт из Excel». Баланс изменится на сумму из файла. Действие не
-              перезаписывает историю — можно будет удалить каждую операцию по отдельности.
+              Балансы будут приведены к значениям из Excel (не добавятся поверх текущих). Будет
+              создано {newRows.length} новых контактов. {zeroedContacts.length} контактов будут
+              обнулены. История операций сохранится.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmImport} className={buttonVariants({})}>
-              Импортировать
+              Сверить
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

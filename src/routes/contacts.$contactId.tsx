@@ -10,8 +10,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { formatAmountInput, parseAmountInput } from "@/lib/cash-shared";
-import { ArrowLeft, ArrowLeftRight, ArrowRight, Minus, Plus } from "lucide-react";
+import { CURRENCIES, formatAmountInput, parseAmountInput, type Currency } from "@/lib/cash-shared";
+import { ArrowLeft, ArrowLeftRight, ArrowRight, ChevronDown, Minus, Plus } from "lucide-react";
 import {
   fmtAmount,
   fmtDateTime,
@@ -36,6 +36,9 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
+import { balanceTone, fmtContactBalance, currencyLabel } from "@/lib/contact-currencies";
+
+const OPS_PREVIEW = 10;
 
 export const Route = createFileRoute("/contacts/$contactId")({
   head: () => ({
@@ -44,17 +47,17 @@ export const Route = createFileRoute("/contacts/$contactId")({
   component: ContactDetailPage,
 });
 
-function balanceTone(v: number) {
-  if (v > 0) return "text-success";
-  if (v < 0) return "text-danger";
-  return "text-muted-foreground";
-}
-
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function fmtTxAmount(currency: string, amount: number) {
+  if (currency === "KZT") return fmtAmount(amount) + " ₸";
+  if (currency === "USD") return fmtUsd(amount);
+  return fmtContactBalance(currency, amount);
 }
 
 function ContactDetailPage() {
@@ -66,10 +69,11 @@ function ContactDetailPage() {
   const addConversion = useAddContactConversion();
   const deleteConversion = useDeleteContactConversion();
 
-  const [currency, setCurrency] = useState<"KZT" | "USD">("KZT");
+  const [currency, setCurrency] = useState<Currency>("KZT");
   const [direction, setDirection] = useState<"in" | "out">("in");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [showAllOps, setShowAllOps] = useState(false);
 
   const [fromCurrency, setFromCurrency] = useState<"KZT" | "USD">("KZT");
   const [convAmount, setConvAmount] = useState("");
@@ -84,7 +88,10 @@ function ContactDetailPage() {
     );
   }
 
-  const { contact, transactions, kztBalance, usdBalance } = data;
+  const { contact, transactions, balances, activeCurrencies } = data;
+
+  const visibleOps = showAllOps ? transactions : transactions.slice(0, OPS_PREVIEW);
+  const hiddenOpsCount = Math.max(0, transactions.length - OPS_PREVIEW);
 
   const submit = () => {
     const raw = parseAmountInput(amount);
@@ -105,7 +112,11 @@ function ContactDetailPage() {
       : convAmountNum / convRateNum
     : 0;
   const fmtSide = (cur: "KZT" | "USD", n: number) =>
-    !isFinite(n) ? "—" : cur === "KZT" ? `${n.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸` : `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    !isFinite(n)
+      ? "—"
+      : cur === "KZT"
+        ? `${n.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`
+        : `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 
   const submitConversion = () => {
     if (!convValid) return;
@@ -137,25 +148,39 @@ function ContactDetailPage() {
       </header>
 
       <main className="mx-auto max-w-2xl px-3 py-4">
-        <div className="mb-3 grid grid-cols-2 gap-2">
-          <div className="rounded-lg border border-border bg-card p-3">
-            <div className="text-xs text-muted-foreground">Тенге</div>
-            <div className={cn("text-xl font-semibold tabular-nums", balanceTone(kztBalance))}>
-              {fmtAmount(kztBalance)} ₸
-            </div>
+        {activeCurrencies.length === 0 ? (
+          <div className="mb-3 rounded-lg border border-dashed border-border bg-card p-4 text-center text-sm text-muted-foreground">
+            Нет открытых счетов — добавьте операцию в любой валюте
           </div>
-          <div className="rounded-lg border border-border bg-card p-3">
-            <div className="text-xs text-muted-foreground">USD</div>
-            <div className={cn("text-xl font-semibold tabular-nums", balanceTone(usdBalance))}>
-              {fmtUsd(usdBalance)}
-            </div>
+        ) : (
+          <div
+            className={cn(
+              "mb-3 grid gap-2",
+              activeCurrencies.length === 1
+                ? "grid-cols-1"
+                : activeCurrencies.length === 2
+                  ? "grid-cols-2"
+                  : "grid-cols-2 sm:grid-cols-3",
+            )}
+          >
+            {activeCurrencies.map((code) => {
+              const value = balances[code] ?? 0;
+              return (
+                <div key={code} className="rounded-lg border border-border bg-card p-3">
+                  <div className="text-xs text-muted-foreground">{currencyLabel(code)}</div>
+                  <div className={cn("text-xl font-semibold tabular-nums", balanceTone(value))}>
+                    {fmtContactBalance(code, value)}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
+        )}
 
         <div className="mb-4 rounded-lg border-2 border-convert/40 bg-convert-soft p-3">
           <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-convert">
             <ArrowLeftRight className="h-4 w-4" />
-            Конвертация
+            Конвертация (KZT ↔ USD)
           </div>
           <div className="mb-2 flex items-center gap-2">
             <div className="flex-1 rounded-md border border-input bg-card px-3 py-2 text-sm">
@@ -269,13 +294,16 @@ function ContactDetailPage() {
             </Button>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[0.8fr_1.4fr_1.2fr_auto]">
-            <Select value={currency} onValueChange={(v) => setCurrency(v as "KZT" | "USD")}>
+            <Select value={currency} onValueChange={(v) => setCurrency(v as Currency)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="KZT">Тенге</SelectItem>
-                <SelectItem value="USD">USD</SelectItem>
+                {CURRENCIES.map((c) => (
+                  <SelectItem key={c.code} value={c.code}>
+                    {c.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Input
@@ -311,28 +339,40 @@ function ContactDetailPage() {
           </div>
           <p className="mt-1.5 text-[11px] text-muted-foreground">
             {direction === "in"
-              ? "Внёс — увеличивает то, что мы должны контакту"
-              : "Забрал — контакт забрал деньги (мы должны меньше или контакт должен нам)"}
+              ? "Внёс — открывает или пополняет счёт в выбранной валюте"
+              : "Забрал — уменьшает счёт; при нуле счёт закрывается, операция остаётся в истории"}
           </p>
         </div>
 
-        <div className="text-sm font-medium">Операции</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium">
+            Операции
+            {transactions.length > 0 && (
+              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                ({transactions.length})
+              </span>
+            )}
+          </div>
+        </div>
         <div className="mt-2 flex flex-col divide-y divide-border rounded-lg border border-border bg-card">
           {transactions.length === 0 && (
             <p className="p-4 text-center text-sm text-muted-foreground">Операций пока нет</p>
           )}
-          {transactions.map((t) => (
+          {visibleOps.map((t) => (
             <div
               key={t.id}
               className={cn(
                 "group flex items-center justify-between gap-3 px-3 py-2",
                 t.source === "excel_import" && "bg-success-soft",
               )}
-              title={t.source === "excel_import" ? "Импортировано из Excel" : undefined}
+              title={t.source === "excel_import" ? "Сверка из Excel" : undefined}
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span>{fmtDateTime(t.occurred_at)}</span>
+                  <span className="rounded bg-muted px-1 py-0.5 text-[9px] font-medium">
+                    {t.currency}
+                  </span>
                   {t.source === "excel_import" && (
                     <span className="rounded bg-success px-1 py-0.5 text-[9px] font-semibold uppercase text-success-foreground">
                       Excel
@@ -348,7 +388,7 @@ function ContactDetailPage() {
                     balanceTone(Number(t.amount)),
                   )}
                 >
-                  {t.currency === "KZT" ? fmtAmount(Number(t.amount)) + " ₸" : fmtUsd(Number(t.amount))}
+                  {fmtTxAmount(t.currency, Number(t.amount))}
                 </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
@@ -364,10 +404,7 @@ function ContactDetailPage() {
                     <AlertDialogHeader>
                       <AlertDialogTitle>Удалить операцию?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        {fmtDateTime(t.occurred_at)} ·{" "}
-                        {t.currency === "KZT"
-                          ? fmtAmount(Number(t.amount)) + " ₸"
-                          : fmtUsd(Number(t.amount))}
+                        {fmtDateTime(t.occurred_at)} · {fmtTxAmount(t.currency, Number(t.amount))}
                         {t.note ? ` · ${t.note}` : ""}. Действие необратимо.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
@@ -386,6 +423,25 @@ function ContactDetailPage() {
             </div>
           ))}
         </div>
+        {!showAllOps && hiddenOpsCount > 0 && (
+          <Button
+            variant="outline"
+            className="mt-2 w-full gap-2"
+            onClick={() => setShowAllOps(true)}
+          >
+            <ChevronDown className="h-4 w-4" />
+            Просмотреть все операции (+{hiddenOpsCount})
+          </Button>
+        )}
+        {showAllOps && transactions.length > OPS_PREVIEW && (
+          <Button
+            variant="ghost"
+            className="mt-2 w-full text-xs text-muted-foreground"
+            onClick={() => setShowAllOps(false)}
+          >
+            Свернуть
+          </Button>
+        )}
 
         <div className="mt-4 text-sm font-medium">История конвертаций</div>
         <div className="mt-2 flex flex-col divide-y divide-border rounded-lg border border-border bg-card">

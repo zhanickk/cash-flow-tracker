@@ -25,16 +25,21 @@ import {
   Wallet,
   DollarSign,
   FileSpreadsheet,
+  Coins,
 } from "lucide-react";
 import {
-  fmtAmount,
   fmtDateTime,
-  fmtUsd,
   useAllContactConversions,
   useContactsWithBalances,
   useCreateContact,
   type ContactWithBalance,
 } from "@/lib/contacts";
+import {
+  CONTACT_CURRENCIES,
+  balanceTone,
+  fmtContactBalance,
+  type ContactCurrency,
+} from "@/lib/contact-currencies";
 
 export const Route = createFileRoute("/contacts/")({
   head: () => ({
@@ -43,17 +48,16 @@ export const Route = createFileRoute("/contacts/")({
   component: ContactsPage,
 });
 
+const CURRENCY_ICON: Partial<Record<ContactCurrency, React.ComponentType<{ className?: string }>>> = {
+  KZT: Wallet,
+  USD: DollarSign,
+};
+
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
-}
-
-function balanceTone(v: number) {
-  if (v > 0) return "text-success";
-  if (v < 0) return "text-danger";
-  return "text-muted-foreground";
 }
 
 function ContactCurrencySection({
@@ -65,7 +69,7 @@ function ContactCurrencySection({
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
-  currency: "KZT" | "USD";
+  currency: ContactCurrency;
   contacts: ContactWithBalance[];
   onConvert: (contact: ContactWithBalance) => void;
 }) {
@@ -80,9 +84,9 @@ function ContactCurrencySection({
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">Нет контактов</p>
         )}
         {contacts.map((c) => {
-          const value = currency === "KZT" ? c.kztBalance : c.usdBalance;
+          const value = c.balances[currency] ?? 0;
           return (
-            <HoverCard key={c.id} openDelay={150} closeDelay={80}>
+            <HoverCard key={`${c.id}-${currency}`} openDelay={150} closeDelay={80}>
               <div className="group flex items-center gap-1 px-1 transition-colors hover:bg-muted/50">
                 <HoverCardTrigger asChild>
                   <Link
@@ -107,28 +111,30 @@ function ContactCurrencySection({
                         balanceTone(value),
                       )}
                     >
-                      {currency === "KZT" ? fmtAmount(value) + " ₸" : fmtUsd(value)}
+                      {fmtContactBalance(currency, value)}
                     </div>
                   </Link>
                 </HoverCardTrigger>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  title="Конвертация"
-                  className="h-8 w-8 shrink-0 bg-convert-soft text-convert opacity-70 hover:bg-convert-soft hover:text-convert hover:opacity-100"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onConvert(c);
-                  }}
-                >
-                  <ArrowLeftRight className="h-3.5 w-3.5" />
-                </Button>
+                {(currency === "KZT" || currency === "USD") && (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    title="Конвертация"
+                    className="h-8 w-8 shrink-0 bg-convert-soft text-convert opacity-70 hover:bg-convert-soft hover:text-convert hover:opacity-100"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onConvert(c);
+                    }}
+                  >
+                    <ArrowLeftRight className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
               <ContactBalanceHoverCard
                 contactId={c.id}
                 name={c.name}
-                kztBalance={c.kztBalance}
-                usdBalance={c.usdBalance}
+                balances={c.balances}
+                activeCurrencies={c.activeCurrencies}
                 txCount={c.txCount}
                 lastActivityAt={c.lastActivityAt}
               />
@@ -143,16 +149,21 @@ function ContactCurrencySection({
 function sortContacts(
   list: ContactWithBalance[],
   sortBy: "balance" | "name" | "recent",
-  currency: "KZT" | "USD",
+  currency: ContactCurrency,
 ) {
   if (sortBy === "name") return [...list].sort((a, b) => a.name.localeCompare(b.name, "ru"));
   if (sortBy === "recent")
     return [...list].sort((a, b) => (b.lastActivityAt ?? "").localeCompare(a.lastActivityAt ?? ""));
   return [...list].sort((a, b) => {
-    const av = Math.abs(currency === "KZT" ? a.kztBalance : a.usdBalance);
-    const bv = Math.abs(currency === "KZT" ? b.kztBalance : b.usdBalance);
+    const av = Math.abs(a.balances[currency] ?? 0);
+    const bv = Math.abs(b.balances[currency] ?? 0);
     return bv - av;
   });
+}
+
+function currencySectionTitle(code: ContactCurrency) {
+  const meta = CONTACT_CURRENCIES.find((c) => c.code === code);
+  return meta ? `${meta.label}` : code;
 }
 
 function ContactsPage() {
@@ -161,6 +172,7 @@ function ContactsPage() {
   const { data: allConversions = [] } = useAllContactConversions();
 
   const [query, setQuery] = useState("");
+  const [currencyFilter, setCurrencyFilter] = useState<"all" | ContactCurrency>("all");
   const [sortBy, setSortBy] = useState<"balance" | "name" | "recent">("balance");
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -176,14 +188,30 @@ function ContactsPage() {
     return (contacts ?? []).filter((c) => c.name.toLowerCase().includes(q));
   }, [contacts, query]);
 
-  const kztContacts = useMemo(
-    () => sortContacts(searched.filter((c) => c.kztBalance !== 0), sortBy, "KZT"),
-    [searched, sortBy],
-  );
-  const usdContacts = useMemo(
-    () => sortContacts(searched.filter((c) => c.usdBalance !== 0), sortBy, "USD"),
-    [searched, sortBy],
-  );
+  const activeCurrencyCodes = useMemo(() => {
+    const set = new Set<ContactCurrency>();
+    for (const c of searched) {
+      for (const code of c.activeCurrencies) set.add(code);
+    }
+    return CONTACT_CURRENCIES.map((x) => x.code).filter((code) => set.has(code));
+  }, [searched]);
+
+  const sections = useMemo(() => {
+    const codes =
+      currencyFilter === "all" ? activeCurrencyCodes : [currencyFilter];
+    return codes
+      .map((code) => ({
+        code,
+        contacts: sortContacts(
+          searched.filter((c) => (c.balances[code] ?? 0) !== 0),
+          sortBy,
+          code,
+        ),
+      }))
+      .filter((s) => s.contacts.length > 0);
+  }, [searched, currencyFilter, activeCurrencyCodes, sortBy]);
+
+  const hasResults = sections.length > 0;
 
   return (
     <div className="min-h-screen bg-background pb-16">
@@ -195,7 +223,7 @@ function ContactsPage() {
           <Users className="h-5 w-5 text-primary" />
           <div className="text-lg font-semibold">Контакты</div>
         </div>
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-3 pb-3">
+        <div className="mx-auto flex max-w-3xl flex-col gap-2 px-3 pb-3 sm:flex-row">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -205,6 +233,18 @@ function ContactsPage() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
+          <select
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            value={currencyFilter}
+            onChange={(e) => setCurrencyFilter(e.target.value as typeof currencyFilter)}
+          >
+            <option value="all">Все валюты</option>
+            {CONTACT_CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.short}
+              </option>
+            ))}
+          </select>
           <select
             className="h-9 rounded-md border border-input bg-background px-2 text-sm"
             value={sortBy}
@@ -256,31 +296,35 @@ function ContactsPage() {
 
       <main className="mx-auto max-w-3xl px-3 py-3">
         {isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Загрузка…</p>}
-        {!isLoading && kztContacts.length === 0 && usdContacts.length === 0 && (
-          <p className="py-8 text-center text-sm text-muted-foreground">Ничего не найдено</p>
+        {!isLoading && !hasResults && (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            {currencyFilter === "all"
+              ? "Ничего не найдено"
+              : `Нет контактов с ненулевым балансом в ${currencyFilter}`}
+          </p>
         )}
-        {!isLoading && (kztContacts.length > 0 || usdContacts.length > 0) && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <ContactCurrencySection
-              title="Тенговые счета"
-              icon={Wallet}
-              currency="KZT"
-              contacts={kztContacts}
-              onConvert={(c) => {
-                setConversionFixedContact({ id: c.id, name: c.name });
-                setConversionOpen(true);
-              }}
-            />
-            <ContactCurrencySection
-              title="Долларовые счета"
-              icon={DollarSign}
-              currency="USD"
-              contacts={usdContacts}
-              onConvert={(c) => {
-                setConversionFixedContact({ id: c.id, name: c.name });
-                setConversionOpen(true);
-              }}
-            />
+        {!isLoading && hasResults && (
+          <div
+            className={cn(
+              "grid gap-4",
+              currencyFilter === "all" && sections.length > 1
+                ? "sm:grid-cols-2"
+                : "grid-cols-1",
+            )}
+          >
+            {sections.map(({ code, contacts: list }) => (
+              <ContactCurrencySection
+                key={code}
+                title={currencySectionTitle(code)}
+                icon={CURRENCY_ICON[code] ?? Coins}
+                currency={code}
+                contacts={list}
+                onConvert={(c) => {
+                  setConversionFixedContact({ id: c.id, name: c.name });
+                  setConversionOpen(true);
+                }}
+              />
+            ))}
           </div>
         )}
       </main>
