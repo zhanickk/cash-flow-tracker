@@ -145,3 +145,32 @@ export async function parseContactsExcel(buffer: ArrayBuffer): Promise<ParsedExc
 
   return { sheetName: lastSheetName, rows };
 }
+
+/** Только USD: САЛЫНГАН (мы должны) и КАРЫЗ (нам должны) с последнего листа. */
+export async function parseUsdContactsExcel(buffer: ArrayBuffer): Promise<ParsedExcelResult> {
+  const result = await parseContactsExcel(buffer);
+  return {
+    sheetName: result.sheetName,
+    rows: result.rows.filter((r) => r.currency === "USD"),
+  };
+}
+
+/** Сводит строки Excel в один баланс USD на контакт (положительный = Салынған, отрицательный = Қарыз). */
+export function mergeUsdTargets(rows: ParsedBalanceRow[]): ParsedBalanceRow[] {
+  const byKey = new Map<string, ParsedBalanceRow>();
+  for (const row of rows) {
+    const key = nameKey(row.normalizedName);
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, { ...row });
+      continue;
+    }
+    const amount = prev.amount + row.amount;
+    byKey.set(key, {
+      ...prev,
+      amount,
+      group: amount >= 0 ? "доллар САЛЫНГАН" : "доллар КАРЫЗ",
+    });
+  }
+  return [...byKey.values()];
+}

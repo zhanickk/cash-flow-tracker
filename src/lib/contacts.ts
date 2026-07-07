@@ -287,7 +287,9 @@ export function useImportContactBalancesFromExcel() {
     mutationFn: async (input: {
       sheetLabel: string;
       targets: ExcelBalanceTarget[];
-    }): Promise<{ reconciled: number; created: number; zeroed: number }> => {
+      /** Удалить контакты, которых нет в Excel (иначе — только обнулить балансы). */
+      deleteMissing?: boolean;
+    }): Promise<{ reconciled: number; created: number; removed: number }> => {
       const [{ data: contacts, error: cErr }, { data: allTxs, error: tErr }] = await Promise.all([
         supabase.from("contacts").select("*"),
         supabase.from("contact_transactions").select("*"),
@@ -343,6 +345,7 @@ export function useImportContactBalancesFromExcel() {
         amount: number;
         note: string;
         source: string;
+        tx_type: ContactTxType;
       }[] = [];
 
       let created = 0;
@@ -379,21 +382,36 @@ export function useImportContactBalancesFromExcel() {
         applyPendingDelta(contact.id, target.currency, delta);
       }
 
-      for (const contact of contactList) {
-        if (namesOnSheet.has(nameKey(contact.name))) continue;
+      const toRemove = contactList.filter((c) => !namesOnSheet.has(nameKey(c.name)));
+      let removed = 0;
 
-        const contactTxs = txsByContact.get(contact.id) ?? [];
-        const balances = computeBalancesFromAmounts(contactTxs);
-        for (const [currency, balance] of Object.entries(balances)) {
-          if (Math.abs(balance) < 0.0001) continue;
-          inserts.push({
-            contact_id: contact.id,
-            currency,
-            amount: -balance,
-            note: `Сверка: контакт отсутствует на листе Excel (лист ${input.sheetLabel}) — обнуление`,
-            source: "excel_import",
-            tx_type: inferTxType(-balance, "excel_import"),
-          });
+      if (input.deleteMissing) {
+        if (toRemove.length > 0) {
+          const { error: delErr } = await supabase
+            .from("contacts")
+            .delete()
+            .in(
+              "id",
+              toRemove.map((c) => c.id),
+            );
+          if (delErr) throw delErr;
+          removed = toRemove.length;
+        }
+      } else {
+        for (const contact of toRemove) {
+          const contactTxs = txsByContact.get(contact.id) ?? [];
+          const balances = computeBalancesFromAmounts(contactTxs);
+          for (const [currency, balance] of Object.entries(balances)) {
+            if (Math.abs(balance) < 0.0001) continue;
+            inserts.push({
+              contact_id: contact.id,
+              currency,
+              amount: -balance,
+              note: `Сверка: контакт отсутствует на листе Excel (лист ${input.sheetLabel}) — обнуление`,
+              source: "excel_import",
+              tx_type: inferTxType(-balance, "excel_import"),
+            });
+          }
         }
       }
 
@@ -405,13 +423,15 @@ export function useImportContactBalancesFromExcel() {
 
       await insertHistory({
         action: "add",
-        summary: `Импорт Excel (лист ${input.sheetLabel}): сверка ${inserts.length} счетов, создано контактов ${created}`,
+        summary: input.deleteMissing
+          ? `Импорт Excel USD (лист ${input.sheetLabel}): сверка ${inserts.length}, создано ${created}, удалено ${removed}`
+          : `Импорт Excel (лист ${input.sheetLabel}): сверка ${inserts.length} счетов, создано контактов ${created}`,
       });
 
       return {
         reconciled: inserts.length,
         created,
-        zeroed: contactList.filter((c) => !namesOnSheet.has(nameKey(c.name))).length,
+        removed: input.deleteMissing ? removed : toRemove.length,
       };
     },
     onSuccess: () => {

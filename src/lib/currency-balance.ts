@@ -126,9 +126,8 @@ export function buildHoldingCards(
     })
     .filter(
       (c) =>
-        c.totalKaryz > 0 ||
-        c.totalSalynghan > 0 ||
-        c.soldForeign > 0,
+        c.currencyCode === "USD" &&
+        (c.totalKaryz > 0 || c.totalSalynghan > 0 || c.soldForeign > 0),
     )
     .sort((a, b) => a.label.localeCompare(b.label, "ru"));
 }
