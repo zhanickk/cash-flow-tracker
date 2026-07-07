@@ -138,8 +138,9 @@ export function filterFxSales(sales: FxSale[], filters: FxSalesFilters): FxSale[
     toTs = endOfDay(range.dateTo);
   }
 
+  const currencyCodes = filters.currencies ?? [];
   const currencySet =
-    filters.currencies.length > 0 ? new Set(filters.currencies.map((c) => c.toUpperCase())) : null;
+    currencyCodes.length > 0 ? new Set(currencyCodes.map((c) => c.toUpperCase())) : null;
 
   return sales.filter((s) => {
     if (filters.period !== "all") {

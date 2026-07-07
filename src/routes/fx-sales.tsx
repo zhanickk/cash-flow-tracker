@@ -84,7 +84,7 @@ function FxSalesPage() {
   const deleteSale = useDeleteFxSale();
   const addCurrency = useAddFxCurrency();
 
-  const [filters, setFilters] = useState<FxSalesFilters>(defaultFilters);
+  const [filters, setFilters] = useState<FxSalesFilters>(() => defaultFilters());
   const [exportBusy, setExportBusy] = useState(false);
 
   const [currencyCode, setCurrencyCode] = useState("USD");
