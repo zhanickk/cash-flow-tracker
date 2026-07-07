@@ -3,6 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { type Transaction, type HistoryEntry, txLabel } from "@/lib/cash-shared";
 import { allocationForSellInsert, recomputeUsdSaleAllocations } from "@/lib/fx-allocation-persist";
+import {
+  syncFxSaleDeleteFromCashTx,
+  syncFxSaleFromCashTx,
+  syncFxSaleUpdateFromCashTx,
+} from "@/lib/fx-sales";
 import { getCachedCashierName } from "@/lib/auth";
 
 export type CashTxRow = Tables<"cash_transactions">;
@@ -126,6 +131,17 @@ export function useAddCashTransaction() {
         salynghan_amount: salynghanAmount,
       });
       if (error) throw error;
+      if (tx.kind === "sell" && tx.rate) {
+        await syncFxSaleFromCashTx({
+          id: tx.id,
+          kind: tx.kind,
+          currency: tx.currency,
+          amount: tx.amount,
+          rate: tx.rate,
+          name: tx.name ?? null,
+          ts: occurredAt,
+        });
+      }
       await insertHistory({
         action: "add",
         kind: tx.kind,
@@ -162,6 +178,24 @@ export function useUpdateCashTransaction() {
       if (Object.keys(dbPatch).length > 0) {
         const { error } = await supabase.from("cash_transactions").update(dbPatch).eq("id", id);
         if (error) throw error;
+      }
+      const merged: Transaction = {
+        ...old,
+        ...patch,
+        name: patch.name !== undefined ? patch.name : old.name,
+        currency: patch.currency ?? old.currency,
+        amount: patch.amount ?? old.amount,
+        rate: patch.rate !== undefined ? patch.rate : old.rate,
+      };
+      if (old.kind === "sell" || merged.kind === "sell") {
+        await syncFxSaleUpdateFromCashTx(id, {
+          kind: merged.kind,
+          currency: merged.currency,
+          amount: merged.amount,
+          rate: merged.rate ?? null,
+          name: merged.name ?? null,
+          ts: merged.ts,
+        });
       }
       const changes: string[] = [];
       if (patch.name !== undefined && patch.name !== old.name)
@@ -200,6 +234,9 @@ export function useDeleteCashTransaction() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (old: Transaction) => {
+      if (old.kind === "sell") {
+        await syncFxSaleDeleteFromCashTx(old.id);
+      }
       const { error } = await supabase.from("cash_transactions").delete().eq("id", old.id);
       if (error) throw error;
       await insertHistory({ action: "delete", kind: old.kind, summary: `Удалено — ${txLabel(old)}` });

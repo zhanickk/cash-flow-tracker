@@ -10,7 +10,7 @@ import {
   simpleCurrencyBalance,
   type ContactTx,
 } from "@/lib/fx-pots";
-import { cashRowsToSales } from "@/lib/fx-sales";
+import { cashRowsToMappedSales } from "@/lib/fx-sale-map";
 import {
   cashRowsToUsdFxOps,
   computePeopleMoneySpend,
@@ -198,7 +198,7 @@ export function useCurrencyHoldings() {
       if (tErr) throw tErr;
       if (uErr) throw uErr;
 
-      const sales = cashRowsToSales(sellRows ?? []);
+      const sales = cashRowsToMappedSales(sellRows ?? []);
       const peopleMoneySpend = computePeopleMoneySpend(cashRowsToUsdFxOps(usdFxRows ?? []));
 
       return {

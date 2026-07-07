@@ -3,21 +3,15 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
 import { fmt, txLabel, type Currency, type Transaction } from "@/lib/cash-shared";
-import {
-  aggregatePotFromContacts,
-  allocationLabel,
-  replayUsdSales,
-  weightedAvgRate,
-  type ContactTx,
-} from "@/lib/fx-pots";
+import { getCachedCashierName } from "@/lib/auth";
+import { weightedAvgRate } from "@/lib/fx-pots";
 import {
   computeUsdAllocationForNewSale,
   recomputeUsdSaleAllocations,
 } from "@/lib/fx-allocation-persist";
-import { mappedToFxSaleFields } from "@/lib/fx-sale-map";
 
 export type FxCurrency = Tables<"fx_currencies">;
-type CashTxRow = Tables<"cash_transactions">;
+type FxSaleRow = Tables<"fx_sales">;
 
 export interface FxSale {
   id: string;
@@ -28,28 +22,21 @@ export interface FxSale {
   kztAmount: number;
   note?: string;
   cashierName?: string;
-  /** Доля продажи из Қарыз (USD, общий котёл) */
+  /** Связь с операцией кассы (может обнулиться при новом дне) */
+  cashTransactionId?: string | null;
+  /** Только для чтения из кассы (currency-balance) */
   karyzAmount?: number;
-  /** Доля из Салынған */
   salynghanAmount?: number;
   allocationLabel?: string;
 }
 
 export type PeriodPreset = "all" | "day" | "week" | "month" | "custom";
 
-export type SourceFilter = "all" | "karyz" | "salynghan" | "mixed";
-
 export interface FxSalesFilters {
   period: PeriodPreset;
   dateFrom: string;
   dateTo: string;
   currencies: string[];
-  kztMin: string;
-  kztMax: string;
-  rateMin: string;
-  rateMax: string;
-  source: SourceFilter;
-  contactId: string;
 }
 
 export interface FxCurrencySummary {
@@ -57,18 +44,7 @@ export interface FxCurrencySummary {
   label: string;
   foreignTotal: number;
   kztTotal: number;
-  avgRate: number;
-  /** Средневзвешенный курс Σ(объём×курс)/Σ(объём) */
   weightedRate: number;
-  /** Ручная корректировка (если задана) */
-  effectiveRate: number;
-  count: number;
-}
-
-export interface FxDaySummary {
-  dateKey: string;
-  label: string;
-  kztTotal: number;
   count: number;
 }
 
@@ -77,23 +53,17 @@ const CURRENCIES_KEY = ["fx-currencies"];
 const TX_KEY = ["cash-transactions"];
 const HISTORY_KEY = ["cash-history"];
 
-function cashTxToSale(r: CashTxRow): FxSale {
-  return mappedToFxSaleFields(r) as FxSale;
-}
-
-export function cashRowsToSales(rows: CashTxRow[]): FxSale[] {
-  return rows.map(cashTxToSale);
-}
-
-function saleToTransaction(s: FxSale): Transaction {
+function fxRowToSale(r: FxSaleRow): FxSale {
   return {
-    id: s.id,
-    kind: "sell",
-    ts: s.occurredAt,
-    currency: s.currencyCode as Currency,
-    amount: s.foreignAmount,
-    rate: s.rate,
-    name: s.note,
+    id: r.id,
+    occurredAt: new Date(r.occurred_at).getTime(),
+    currencyCode: r.currency_code,
+    foreignAmount: Number(r.foreign_amount),
+    rate: Number(r.rate),
+    kztAmount: Number(r.kzt_amount),
+    note: r.note ?? undefined,
+    cashierName: r.cashier_name ?? undefined,
+    cashTransactionId: r.cash_transaction_id,
   };
 }
 
@@ -105,18 +75,12 @@ export function saleLabel(s: FxSale, currencyLabel?: string) {
 export function defaultFilters(): FxSalesFilters {
   const now = new Date();
   const start = new Date(now);
+  start.setDate(1);
   start.setHours(0, 0, 0, 0);
   return {
     period: "month",
     dateFrom: toDateInput(start),
     dateTo: toDateInput(now),
-    currencies: [],
-    kztMin: "",
-    kztMax: "",
-    rateMin: "",
-    rateMax: "",
-    source: "all",
-    contactId: "",
   };
 }
 
@@ -135,13 +99,6 @@ export function toDateTimeLocalInput(ts: number) {
   const h = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${y}-${m}-${day}T${h}:${min}`;
-}
-
-function parseOptionalNumber(s: string): number | undefined {
-  if (!s.trim()) return undefined;
-  const cleaned = s.replace(/\s/g, "").replace(/,/g, ".");
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? undefined : n;
 }
 
 function startOfDay(dateStr: string) {
@@ -181,10 +138,6 @@ export function filterFxSales(sales: FxSale[], filters: FxSalesFilters): FxSale[
     toTs = endOfDay(range.dateTo);
   }
 
-  const kztMin = parseOptionalNumber(filters.kztMin);
-  const kztMax = parseOptionalNumber(filters.kztMax);
-  const rateMin = parseOptionalNumber(filters.rateMin);
-  const rateMax = parseOptionalNumber(filters.rateMax);
   const currencySet =
     filters.currencies.length > 0 ? new Set(filters.currencies.map((c) => c.toUpperCase())) : null;
 
@@ -193,18 +146,6 @@ export function filterFxSales(sales: FxSale[], filters: FxSalesFilters): FxSale[
       if (s.occurredAt < fromTs || s.occurredAt > toTs) return false;
     }
     if (currencySet && !currencySet.has(s.currencyCode)) return false;
-    if (kztMin !== undefined && s.kztAmount < kztMin) return false;
-    if (kztMax !== undefined && s.kztAmount > kztMax) return false;
-    if (rateMin !== undefined && s.rate < rateMin) return false;
-    if (rateMax !== undefined && s.rate > rateMax) return false;
-    if (filters.source !== "all" && s.currencyCode === "USD") {
-      const k = s.karyzAmount ?? 0;
-      const sh = s.salynghanAmount ?? 0;
-      if (filters.source === "karyz" && !(k > 0 && sh === 0)) return false;
-      if (filters.source === "salynghan" && !(sh > 0 && k === 0)) return false;
-      if (filters.source === "mixed" && !(k > 0 && sh > 0)) return false;
-    }
-    if (filters.source !== "all" && s.currencyCode !== "USD") return false;
     return true;
   });
 }
@@ -223,7 +164,6 @@ export function filtersToPeriodTs(filters: FxSalesFilters): { fromTs: number; to
 export function aggregateByCurrency(
   sales: FxSale[],
   currencies: FxCurrency[],
-  rateOverrides?: Map<string, number>,
 ): FxCurrencySummary[] {
   const labelByCode = new Map(currencies.map((c) => [c.code, c.label]));
   const map = new Map<string, FxSale[]>();
@@ -238,43 +178,161 @@ export function aggregateByCurrency(
     .map(([currencyCode, list]) => {
       const foreignTotal = list.reduce((a, s) => a + s.foreignAmount, 0);
       const kztTotal = list.reduce((a, s) => a + s.kztAmount, 0);
-      const weightedRate = weightedAvgRate(list);
-      const avgRate = list.length > 0 ? list.reduce((a, s) => a + s.rate, 0) / list.length : 0;
-      const override = rateOverrides?.get(currencyCode);
-      const effectiveRate = override ?? weightedRate;
+      const weightedRate = weightedAvgRate(
+        list.map((s) => ({
+          ...s,
+          foreignAmount: s.foreignAmount,
+          rate: s.rate,
+          kztAmount: s.kztAmount,
+          currencyCode: s.currencyCode,
+          occurredAt: s.occurredAt,
+          id: s.id,
+        })),
+      );
       return {
         currencyCode,
         label: labelByCode.get(currencyCode) ?? currencyCode,
         foreignTotal,
         kztTotal,
-        avgRate,
         weightedRate,
-        effectiveRate,
         count: list.length,
       };
     })
     .sort((a, b) => b.kztTotal - a.kztTotal);
 }
 
-export function aggregateByDay(sales: FxSale[]): FxDaySummary[] {
-  const map = new Map<string, { kzt: number; count: number }>();
-  for (const s of sales) {
-    const d = new Date(s.occurredAt);
-    const key = toDateInput(d);
-    const prev = map.get(key) ?? { kzt: 0, count: 0 };
-    map.set(key, { kzt: prev.kzt + s.kztAmount, count: prev.count + 1 });
+/** Запись в журнал fx_sales (не удаляется при новом дне кассы). */
+export async function recordFxSale(input: {
+  cashTransactionId?: string | null;
+  occurredAt: string;
+  currencyCode: string;
+  foreignAmount: number;
+  rate: number;
+  note?: string | null;
+}): Promise<string> {
+  const kztAmount = input.foreignAmount * input.rate;
+  const { data, error } = await supabase
+    .from("fx_sales")
+    .insert({
+      cash_transaction_id: input.cashTransactionId ?? null,
+      currency_code: input.currencyCode,
+      foreign_amount: input.foreignAmount,
+      rate: input.rate,
+      kzt_amount: kztAmount,
+      note: input.note?.trim() || null,
+      occurred_at: input.occurredAt,
+      cashier_name: getCachedCashierName(),
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+
+/** Синхронизация продажи из кассы → журнал fx_sales (создание). */
+export async function syncFxSaleFromCashTx(tx: {
+  id: string;
+  kind: string;
+  currency: string;
+  amount: number;
+  rate?: number | null;
+  name?: string | null;
+  ts: string | number;
+}) {
+  if (tx.kind !== "sell") return;
+  const { data: existing } = await supabase
+    .from("fx_sales")
+    .select("id")
+    .eq("cash_transaction_id", tx.id)
+    .maybeSingle();
+  if (existing) return;
+
+  const rate = Number(tx.rate ?? 0);
+  if (rate <= 0) return;
+
+  await recordFxSale({
+    cashTransactionId: tx.id,
+    occurredAt: typeof tx.ts === "number" ? new Date(tx.ts).toISOString() : tx.ts,
+    currencyCode: tx.currency,
+    foreignAmount: Number(tx.amount),
+    rate,
+    note: tx.name,
+  });
+}
+
+/** Обновление записи журнала по операции кассы. */
+export async function syncFxSaleUpdateFromCashTx(
+  cashTxId: string,
+  merged: {
+    kind: string;
+    currency: string;
+    amount: number;
+    rate?: number | null;
+    name?: string | null;
+    ts?: string | number;
+  },
+) {
+  if (merged.kind !== "sell") {
+    await syncFxSaleDeleteFromCashTx(cashTxId);
+    return;
   }
-  return [...map.entries()]
-    .map(([dateKey, v]) => ({
-      dateKey,
-      label: new Date(dateKey).toLocaleDateString("ru-RU", {
-        day: "2-digit",
-        month: "2-digit",
-      }),
-      kztTotal: v.kzt,
-      count: v.count,
-    }))
-    .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+
+  const rate = Number(merged.rate ?? 0);
+  const { data: existing } = await supabase
+    .from("fx_sales")
+    .select("id")
+    .eq("cash_transaction_id", cashTxId)
+    .maybeSingle();
+
+  if (rate <= 0) {
+    if (existing) {
+      const { error } = await supabase.from("fx_sales").delete().eq("id", existing.id);
+      if (error) throw error;
+    }
+    return;
+  }
+
+  const foreignAmount = Number(merged.amount);
+  const kztAmount = foreignAmount * rate;
+  const occurredAt =
+    merged.ts !== undefined
+      ? typeof merged.ts === "number"
+        ? new Date(merged.ts).toISOString()
+        : merged.ts
+      : undefined;
+
+  if (existing) {
+    const patch: TablesUpdate<"fx_sales"> = {
+      currency_code: merged.currency,
+      foreign_amount: foreignAmount,
+      rate,
+      kzt_amount: kztAmount,
+      note: merged.name?.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (occurredAt) patch.occurred_at = occurredAt;
+    const { error } = await supabase.from("fx_sales").update(patch).eq("id", existing.id);
+    if (error) throw error;
+    return;
+  }
+
+  await recordFxSale({
+    cashTransactionId: cashTxId,
+    occurredAt: occurredAt ?? new Date().toISOString(),
+    currencyCode: merged.currency,
+    foreignAmount,
+    rate,
+    note: merged.name,
+  });
+}
+
+/** Удаление записи журнала, связанной с операцией кассы. */
+export async function syncFxSaleDeleteFromCashTx(cashTxId: string) {
+  const { error } = await supabase
+    .from("fx_sales")
+    .delete()
+    .eq("cash_transaction_id", cashTxId);
+  if (error) throw error;
 }
 
 /* ============== Reads ============== */
@@ -299,29 +357,17 @@ export function useFxSales() {
     queryKey: SALES_KEY,
     queryFn: async (): Promise<FxSale[]> => {
       const { data, error } = await supabase
-        .from("cash_transactions")
+        .from("fx_sales")
         .select("*")
-        .eq("kind", "sell")
-        .order("ts", { ascending: false });
+        .order("occurred_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []).map(cashTxToSale);
+      return (data ?? []).map(fxRowToSale);
     },
   });
 }
 
-export function useFxReportContacts() {
-  return useQuery({
-    queryKey: ["fx-report-contacts"],
-    queryFn: async () => {
-      const [{ data: contacts, error: cErr }, { data: txs, error: tErr }] = await Promise.all([
-        supabase.from("contacts").select("*").order("name"),
-        supabase.from("contact_transactions").select("*"),
-      ]);
-      if (cErr) throw cErr;
-      if (tErr) throw tErr;
-      return { contacts: contacts ?? [], txs: txs ?? [] };
-    },
-  });
+function invalidateFxSalesOnly(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: SALES_KEY });
 }
 
 function invalidateCashAndSales(qc: ReturnType<typeof useQueryClient>) {
@@ -329,7 +375,6 @@ function invalidateCashAndSales(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: TX_KEY });
   qc.invalidateQueries({ queryKey: HISTORY_KEY });
   qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
-  qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
   qc.invalidateQueries({ queryKey: ["fx-risk-dashboard"] });
 }
 
@@ -368,6 +413,7 @@ export function useAddFxCurrency() {
   });
 }
 
+/** Новая продажа: касса + журнал fx_sales. */
 export function useAddFxSale() {
   const qc = useQueryClient();
   return useMutation({
@@ -415,6 +461,16 @@ export function useAddFxSale() {
         salynghan_amount: salynghanAmount,
       });
       if (error) throw error;
+
+      await recordFxSale({
+        cashTransactionId: id,
+        occurredAt: input.occurredAt,
+        currencyCode: input.currencyCode,
+        foreignAmount: input.foreignAmount,
+        rate: input.rate,
+        note: input.note,
+      });
+
       let summary = `Добавлено — ${txLabel(tx)}`;
       if (allocWarning) summary += ` · ${allocWarning}`;
       await insertHistory({ action: "add", kind: "sell", summary });
@@ -427,6 +483,7 @@ export function useAddFxSale() {
   });
 }
 
+/** Редактирование только в журнале fx_sales (касса и контакты не трогаем). */
 export function useUpdateFxSale() {
   const qc = useQueryClient();
   return useMutation({
@@ -444,66 +501,48 @@ export function useUpdateFxSale() {
       const { id, old, patch } = vars;
       const foreignAmount = patch.foreignAmount ?? old.foreignAmount;
       const rate = patch.rate ?? old.rate;
-      const currency = (patch.currencyCode ?? old.currencyCode) as Currency;
-      const dbPatch: TablesUpdate<"cash_transactions"> = {};
-      if (patch.occurredAt !== undefined) dbPatch.ts = patch.occurredAt;
-      if (patch.currencyCode !== undefined) dbPatch.currency = patch.currencyCode;
-      if (patch.foreignAmount !== undefined) dbPatch.amount = patch.foreignAmount;
-      if (patch.rate !== undefined) dbPatch.rate = patch.rate;
-      if (patch.note !== undefined) dbPatch.name = patch.note;
+      const kztAmount = foreignAmount * rate;
 
-      const { error } = await supabase.from("cash_transactions").update(dbPatch).eq("id", id);
-      if (error) throw error;
-
-      const next: Transaction = {
-        id,
-        kind: "sell",
-        ts: patch.occurredAt ? new Date(patch.occurredAt).getTime() : old.occurredAt,
-        currency,
-        amount: foreignAmount,
-        rate,
-        name: patch.note === undefined ? old.note : patch.note ?? undefined,
+      const dbPatch: TablesUpdate<"fx_sales"> = {
+        kzt_amount: kztAmount,
+        updated_at: new Date().toISOString(),
       };
-      const changes: string[] = [];
-      if (patch.occurredAt !== undefined)
-        changes.push(`дата: ${new Date(old.occurredAt).toLocaleString("ru-RU")} → ${new Date(patch.occurredAt).toLocaleString("ru-RU")}`);
-      if (patch.currencyCode && patch.currencyCode !== old.currencyCode)
-        changes.push(`валюта: ${old.currencyCode} → ${patch.currencyCode}`);
-      if (patch.foreignAmount !== undefined && patch.foreignAmount !== old.foreignAmount)
-        changes.push(`сумма: ${old.foreignAmount} → ${patch.foreignAmount}`);
-      if (patch.rate !== undefined && patch.rate !== old.rate)
-        changes.push(`курс: ${old.rate} → ${patch.rate}`);
-      if (patch.note !== undefined && patch.note !== (old.note ?? null))
-        changes.push(`примечание изменено`);
+      if (patch.occurredAt !== undefined) dbPatch.occurred_at = patch.occurredAt;
+      if (patch.currencyCode !== undefined) dbPatch.currency_code = patch.currencyCode;
+      if (patch.foreignAmount !== undefined) dbPatch.foreign_amount = patch.foreignAmount;
+      if (patch.rate !== undefined) dbPatch.rate = patch.rate;
+      if (patch.note !== undefined) dbPatch.note = patch.note;
+
+      const { error } = await supabase.from("fx_sales").update(dbPatch).eq("id", id);
+      if (error) throw error;
 
       await insertHistory({
         action: "edit",
         kind: "sell",
-        summary: `Изменено — ${txLabel(next)} (${changes.join(", ") || "без изменений"})`,
+        summary: `FX журнал: изменена продажа ${old.currencyCode} ${fmt(foreignAmount)} × ${fmt(rate, 4)}`,
       });
     },
-    onSuccess: async () => {
-      await recomputeUsdSaleAllocations();
-      invalidateCashAndSales(qc);
+    onSuccess: () => {
+      invalidateFxSalesOnly(qc);
     },
   });
 }
 
+/** Удаление только из журнала fx_sales. */
 export function useDeleteFxSale() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (old: FxSale) => {
-      const { error } = await supabase.from("cash_transactions").delete().eq("id", old.id);
+      const { error } = await supabase.from("fx_sales").delete().eq("id", old.id);
       if (error) throw error;
       await insertHistory({
         action: "delete",
         kind: "sell",
-        summary: `Удалено — ${txLabel(saleToTransaction(old))}`,
+        summary: `FX журнал: удалена продажа ${saleLabel(old)}`,
       });
     },
-    onSuccess: async () => {
-      await recomputeUsdSaleAllocations();
-      invalidateCashAndSales(qc);
+    onSuccess: () => {
+      invalidateFxSalesOnly(qc);
     },
   });
 }

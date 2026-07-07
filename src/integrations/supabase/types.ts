@@ -388,6 +388,7 @@ export type Database = {
       }
       fx_sales: {
         Row: {
+          cash_transaction_id: string | null
           cashier_name: string | null
           created_at: string
           currency_code: string
@@ -400,6 +401,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          cash_transaction_id?: string | null
           cashier_name?: string | null
           created_at?: string
           currency_code: string
@@ -412,6 +414,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          cash_transaction_id?: string | null
           cashier_name?: string | null
           created_at?: string
           currency_code?: string
@@ -424,6 +427,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "fx_sales_cash_transaction_id_fkey"
+            columns: ["cash_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "cash_transactions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "fx_sales_currency_code_fkey"
             columns: ["currency_code"]
