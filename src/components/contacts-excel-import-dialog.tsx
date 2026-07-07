@@ -19,7 +19,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   parseContactsExcel,
@@ -124,8 +123,8 @@ export function ContactsExcelImportDialog({
           if (!v) reset();
         }}
       >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[min(90vh,720px)] max-w-2xl flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-primary" />
               Импорт баланса из Excel
@@ -137,6 +136,7 @@ export function ContactsExcelImportDialog({
             </DialogDescription>
           </DialogHeader>
 
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           {!rows && !resultMsg && (
             <label
               className={cn(
@@ -186,7 +186,7 @@ export function ContactsExcelImportDialog({
                   Обнулить: <span className="font-medium text-danger">{zeroedContacts.length}</span>
                 </span>
               </div>
-              <ScrollArea className="h-56 rounded-md border border-border">
+              <div className="max-h-52 overflow-y-auto rounded-md border border-border">
                 <ul className="divide-y divide-border">
                   {rows.map((r, i) => (
                     <li key={i} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
@@ -209,25 +209,29 @@ export function ContactsExcelImportDialog({
                     </li>
                   ))}
                 </ul>
-              </ScrollArea>
+              </div>
               {zeroedContacts.length > 0 && (
                 <div className="rounded-md border border-border bg-muted/40 p-2 text-xs">
                   <div className="mb-1 font-medium text-muted-foreground">
-                    Будут обнулены (нет на листе):
+                    Будут обнулены (нет на листе): {zeroedContacts.length}
                   </div>
-                  <div className="flex flex-wrap gap-1">
-                    {zeroedContacts.map((c) => (
-                      <span key={c.id} className="rounded bg-card px-1.5 py-0.5">
-                        {c.name}
-                      </span>
-                    ))}
+                  <div className="max-h-28 overflow-y-auto">
+                    <div className="flex flex-wrap gap-1">
+                      {zeroedContacts.map((c) => (
+                        <span key={c.id} className="rounded bg-card px-1.5 py-0.5">
+                          {c.name}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          <DialogFooter>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t border-border pt-4">
             {rows && (
               <Button variant="outline" onClick={reset}>
                 Загрузить другой файл
