@@ -81,6 +81,7 @@ export function defaultFilters(): FxSalesFilters {
     period: "month",
     dateFrom: toDateInput(start),
     dateTo: toDateInput(now),
+    currencies: [],
   };
 }
 

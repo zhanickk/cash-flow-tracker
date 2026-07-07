@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Banknote,
@@ -117,6 +117,17 @@ function FxSalesPage() {
     return a > 0 && r > 0 ? a * r : 0;
   }, [foreignAmount, rate]);
 
+  const selectedCurrencyCodes = filters.currencies ?? [];
+  const formCurrencyCode =
+    currencies.some((c) => c.code === currencyCode) ? currencyCode : (currencies[0]?.code ?? "");
+
+  useEffect(() => {
+    if (currencies.length === 0) return;
+    if (!currencies.some((c) => c.code === currencyCode)) {
+      setCurrencyCode(currencies[0]!.code);
+    }
+  }, [currencies, currencyCode]);
+
   function setPeriod(period: FxSalesFilters["period"]) {
     if (period === "custom" || period === "all") {
       setFilters((f) => ({ ...f, period }));
@@ -128,7 +139,7 @@ function FxSalesPage() {
 
   function toggleCurrency(code: string) {
     setFilters((f) => {
-      const set = new Set(f.currencies);
+      const set = new Set(f.currencies ?? []);
       if (set.has(code)) set.delete(code);
       else set.add(code);
       return { ...f, currencies: [...set] };
@@ -142,7 +153,7 @@ function FxSalesPage() {
     addSale.mutate(
       {
         occurredAt: new Date(occurredAt).toISOString(),
-        currencyCode,
+        currencyCode: formCurrencyCode || currencyCode,
         foreignAmount: a,
         rate: r,
         note: note.trim() || undefined,
@@ -250,7 +261,7 @@ function FxSalesPage() {
               <div className="flex flex-wrap gap-1">
                 {currencies.map((c) => {
                   const active =
-                    filters.currencies.length === 0 || filters.currencies.includes(c.code);
+                    selectedCurrencyCodes.length === 0 || selectedCurrencyCodes.includes(c.code);
                   return (
                     <Button
                       key={c.code}
@@ -346,18 +357,22 @@ function FxSalesPage() {
                 onChange={(e) => setOccurredAt(e.target.value)}
                 className="lg:col-span-2"
               />
-              <Select value={currencyCode} onValueChange={setCurrencyCode}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {currencies.map((c) => (
-                    <SelectItem key={c.code} value={c.code}>
-                      {c.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {currencies.length > 0 ? (
+                <Select value={formCurrencyCode} onValueChange={setCurrencyCode}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currencies.map((c) => (
+                      <SelectItem key={c.code} value={c.code}>
+                        {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input disabled placeholder="Загрузка валют…" />
+              )}
               <Input
                 placeholder="Объём"
                 value={foreignAmount}
