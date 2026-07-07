@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { type Transaction, type HistoryEntry, txLabel } from "@/lib/cash-shared";
+import { allocationForSellInsert, recomputeUsdSaleAllocations } from "@/lib/fx-allocation-persist";
 import { getCachedCashierName } from "@/lib/auth";
 
 export type CashTxRow = Tables<"cash_transactions">;
@@ -79,10 +80,38 @@ export async function insertHistory(entry: Omit<HistoryEntry, "id" | "ts">) {
 
 /* ============== Mutations ============== */
 
+async function settleCashMutations(
+  qc: ReturnType<typeof useQueryClient>,
+  tx?: Pick<Transaction, "kind">,
+) {
+  if (tx?.kind === "sell") await recomputeUsdSaleAllocations();
+  qc.invalidateQueries({ queryKey: TX_KEY });
+  qc.invalidateQueries({ queryKey: HISTORY_KEY });
+  qc.invalidateQueries({ queryKey: ["fx-sales"] });
+  qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
+  qc.invalidateQueries({ queryKey: ["fx-risk-dashboard"] });
+}
+
 export function useAddCashTransaction() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (tx: Transaction) => {
+      const occurredAt = tx.ts ? new Date(tx.ts).toISOString() : new Date().toISOString();
+      let karyzAmount = 0;
+      let salynghanAmount = 0;
+      let allocNote = "";
+      if (tx.kind === "sell" && tx.rate) {
+        const alloc = await allocationForSellInsert({
+          kind: tx.kind,
+          currency: tx.currency,
+          foreignAmount: tx.amount,
+          rate: tx.rate,
+          occurredAt,
+        });
+        karyzAmount = alloc.karyzAmount;
+        salynghanAmount = alloc.salynghanAmount;
+        if (alloc.warning) allocNote = ` · ${alloc.warning}`;
+      }
       const { error } = await supabase.from("cash_transactions").insert({
         id: tx.id,
         kind: tx.kind,
@@ -92,9 +121,16 @@ export function useAddCashTransaction() {
         rate: tx.rate ?? null,
         expense_type: tx.expenseType ?? null,
         contact_tx_id: tx.contactTxId ?? null,
+        ts: occurredAt,
+        karyz_amount: karyzAmount,
+        salynghan_amount: salynghanAmount,
       });
       if (error) throw error;
-      await insertHistory({ action: "add", kind: tx.kind, summary: `Добавлено — ${txLabel(tx)}` });
+      await insertHistory({
+        action: "add",
+        kind: tx.kind,
+        summary: `Добавлено — ${txLabel(tx)}${allocNote}`,
+      });
       return tx;
     },
     onMutate: async (tx) => {
@@ -106,11 +142,8 @@ export function useAddCashTransaction() {
     onError: (_err, _tx, ctx) => {
       if (ctx?.prev) qc.setQueryData(TX_KEY, ctx.prev);
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: TX_KEY });
-      qc.invalidateQueries({ queryKey: HISTORY_KEY });
-      qc.invalidateQueries({ queryKey: ["fx-sales"] });
-      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
+    onSettled: async (_d, _e, tx) => {
+      await settleCashMutations(qc, tx);
     },
   });
 }
@@ -157,11 +190,8 @@ export function useUpdateCashTransaction() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(TX_KEY, ctx.prev);
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: TX_KEY });
-      qc.invalidateQueries({ queryKey: HISTORY_KEY });
-      qc.invalidateQueries({ queryKey: ["fx-sales"] });
-      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
+    onSettled: async (_d, _e, vars) => {
+      await settleCashMutations(qc, vars?.old);
     },
   });
 }
@@ -184,11 +214,8 @@ export function useDeleteCashTransaction() {
     onError: (_err, _old, ctx) => {
       if (ctx?.prev) qc.setQueryData(TX_KEY, ctx.prev);
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: TX_KEY });
-      qc.invalidateQueries({ queryKey: HISTORY_KEY });
-      qc.invalidateQueries({ queryKey: ["fx-sales"] });
-      qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
+    onSettled: async (_d, _e, old) => {
+      await settleCashMutations(qc, old);
     },
   });
 }

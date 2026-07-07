@@ -70,9 +70,11 @@ export type Database = {
           currency: string
           expense_type: string | null
           id: string
+          karyz_amount: number | null
           kind: string
           name: string | null
           rate: number | null
+          salynghan_amount: number | null
           ts: string
         }
         Insert: {
@@ -82,9 +84,11 @@ export type Database = {
           currency: string
           expense_type?: string | null
           id?: string
+          karyz_amount?: number | null
           kind: string
           name?: string | null
           rate?: number | null
+          salynghan_amount?: number | null
           ts?: string
         }
         Update: {
@@ -94,9 +98,11 @@ export type Database = {
           currency?: string
           expense_type?: string | null
           id?: string
+          karyz_amount?: number | null
           kind?: string
           name?: string | null
           rate?: number | null
+          salynghan_amount?: number | null
           ts?: string
         }
         Relationships: [
@@ -177,6 +183,7 @@ export type Database = {
       contact_transactions: {
         Row: {
           amount: number
+          cash_transaction_id: string | null
           contact_id: string | null
           conversion_id: string | null
           created_at: string
@@ -187,9 +194,11 @@ export type Database = {
           note: string | null
           occurred_at: string
           source: string | null
+          tx_type: string
         }
         Insert: {
           amount: number
+          cash_transaction_id?: string | null
           contact_id?: string | null
           conversion_id?: string | null
           created_at?: string
@@ -200,9 +209,11 @@ export type Database = {
           note?: string | null
           occurred_at?: string
           source?: string | null
+          tx_type?: string
         }
         Update: {
           amount?: number
+          cash_transaction_id?: string | null
           contact_id?: string | null
           conversion_id?: string | null
           created_at?: string
@@ -213,8 +224,16 @@ export type Database = {
           note?: string | null
           occurred_at?: string
           source?: string | null
+          tx_type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "contact_transactions_cash_transaction_id_fkey"
+            columns: ["cash_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "cash_transactions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "contact_transactions_contact_id_fkey"
             columns: ["contact_id"]
@@ -325,6 +344,47 @@ export type Database = {
           symbol?: string | null
         }
         Relationships: []
+      }
+      fx_rate_overrides: {
+        Row: {
+          created_at: string
+          currency_code: string
+          id: string
+          note: string | null
+          override_rate: number
+          period_end: string
+          period_start: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          currency_code: string
+          id?: string
+          note?: string | null
+          override_rate: number
+          period_end: string
+          period_start: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          currency_code?: string
+          id?: string
+          note?: string | null
+          override_rate?: number
+          period_end?: string
+          period_start?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fx_rate_overrides_currency_code_fkey"
+            columns: ["currency_code"]
+            isOneToOne: false
+            referencedRelation: "fx_currencies"
+            referencedColumns: ["code"]
+          },
+        ]
       }
       fx_sales: {
         Row: {

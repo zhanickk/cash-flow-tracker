@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { balanceTone, fmtContactBalance, currencyLabel } from "@/lib/contact-currencies";
+import { txTypeLabel } from "@/lib/fx-pots";
 
 const OPS_PREVIEW = 10;
 
@@ -70,7 +71,8 @@ function ContactDetailPage() {
   const deleteConversion = useDeleteContactConversion();
 
   const [currency, setCurrency] = useState<Currency>("KZT");
-  const [direction, setDirection] = useState<"in" | "out">("in");
+  const [opKind, setOpKind] = useState<"salynghan" | "karyz" | "repayment">("salynghan");
+  const [repaymentTarget, setRepaymentTarget] = useState<"salynghan" | "karyz">("salynghan");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [showAllOps, setShowAllOps] = useState(false);
@@ -96,8 +98,21 @@ function ContactDetailPage() {
   const submit = () => {
     const raw = parseAmountInput(amount);
     if (!raw) return;
-    const n = direction === "in" ? Math.abs(raw) : -Math.abs(raw);
-    addTx.mutate({ contactId: contact.id, currency, amount: n, note: note.trim() || undefined });
+    let n: number;
+    let txType: "salynghan" | "karyz" | "repayment" = opKind;
+    if (opKind === "repayment") {
+      n = repaymentTarget === "salynghan" ? -Math.abs(raw) : Math.abs(raw);
+    } else {
+      n = opKind === "salynghan" ? Math.abs(raw) : -Math.abs(raw);
+      txType = opKind;
+    }
+    addTx.mutate({
+      contactId: contact.id,
+      currency,
+      amount: n,
+      note: note.trim() || undefined,
+      txType,
+    });
     setAmount("");
     setNote("");
   };
@@ -263,36 +278,67 @@ function ContactDetailPage() {
 
         <div className="mb-4 rounded-lg border border-border bg-card p-3">
           <div className="mb-2 text-sm font-medium">Новая операция</div>
-          <div className="mb-2 grid grid-cols-2 gap-2">
+          <div className="mb-2 grid grid-cols-3 gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setDirection("in")}
+              onClick={() => setOpKind("salynghan")}
               className={cn(
-                "gap-1.5 border-2",
-                direction === "in"
+                "gap-1.5 border-2 text-xs",
+                opKind === "salynghan"
                   ? "border-success bg-success text-success-foreground hover:bg-success/90"
                   : "border-border bg-background text-muted-foreground hover:bg-accent",
               )}
             >
               <Plus className="h-4 w-4" />
-              Внёс
+              Салынған
             </Button>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setDirection("out")}
+              onClick={() => setOpKind("karyz")}
               className={cn(
-                "gap-1.5 border-2",
-                direction === "out"
+                "gap-1.5 border-2 text-xs",
+                opKind === "karyz"
                   ? "border-danger bg-danger text-danger-foreground hover:bg-danger/90"
                   : "border-border bg-background text-muted-foreground hover:bg-accent",
               )}
             >
               <Minus className="h-4 w-4" />
-              Забрал
+              Қарыз
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpKind("repayment")}
+              className={cn(
+                "gap-1.5 border-2 text-xs",
+                opKind === "repayment"
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent",
+              )}
+            >
+              Погашение
             </Button>
           </div>
+          {opKind === "repayment" && (
+            <div className="mb-2 flex gap-2">
+              <Button
+                size="sm"
+                variant={repaymentTarget === "salynghan" ? "secondary" : "outline"}
+                onClick={() => setRepaymentTarget("salynghan")}
+              >
+                Возврат Салынған
+              </Button>
+              <Button
+                size="sm"
+                variant={repaymentTarget === "karyz" ? "secondary" : "outline"}
+                onClick={() => setRepaymentTarget("karyz")}
+              >
+                Погашение Қарыз
+              </Button>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-[0.8fr_1.4fr_1.2fr_auto]">
             <Select value={currency} onValueChange={(v) => setCurrency(v as Currency)}>
               <SelectTrigger>
@@ -324,12 +370,12 @@ function ContactDetailPage() {
               onClick={submit}
               className={cn(
                 "gap-1",
-                direction === "in"
+                opKind === "salynghan"
                   ? "bg-success text-success-foreground hover:bg-success/90"
                   : "bg-danger text-danger-foreground hover:bg-danger/90",
               )}
             >
-              {direction === "in" ? (
+              {opKind === "salynghan" ? (
                 <Plus className="h-4 w-4" />
               ) : (
                 <Minus className="h-4 w-4" />
@@ -338,9 +384,13 @@ function ContactDetailPage() {
             </Button>
           </div>
           <p className="mt-1.5 text-[11px] text-muted-foreground">
-            {direction === "in"
-              ? "Внёс — открывает или пополняет счёт в выбранной валюте"
-              : "Забрал — уменьшает счёт; при нуле счёт закрывается, операция остаётся в истории"}
+            {opKind === "salynghan"
+              ? "Салынған — клиент положил деньги нам (наш долг перед ним)"
+              : opKind === "karyz"
+                ? "Қарыз — клиент должен нам"
+                : repaymentTarget === "salynghan"
+                  ? "Погашение: клиент забирает свои деньги (в исходной валюте)"
+                  : "Погашение: клиент возвращает долг (Қарыз)"}
           </p>
         </div>
 
@@ -372,6 +422,9 @@ function ContactDetailPage() {
                   <span>{fmtDateTime(t.occurred_at)}</span>
                   <span className="rounded bg-muted px-1 py-0.5 text-[9px] font-medium">
                     {t.currency}
+                  </span>
+                  <span className="rounded bg-muted px-1 py-0.5 text-[9px] font-medium text-muted-foreground">
+                    {txTypeLabel(t.tx_type, Number(t.amount))}
                   </span>
                   {t.source === "excel_import" && (
                     <span className="rounded bg-success px-1 py-0.5 text-[9px] font-semibold uppercase text-success-foreground">

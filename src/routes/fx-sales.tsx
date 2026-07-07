@@ -55,11 +55,13 @@ import {
   filterFxSales,
   type FxSale,
   type FxSalesFilters,
+  type SourceFilter,
   toDateTimeLocalInput,
   useAddFxCurrency,
   useAddFxSale,
   useDeleteFxSale,
   useFxCurrencies,
+  useFxReportContacts,
   useFxSales,
   useUpdateFxSale,
 } from "@/lib/fx-sales";
@@ -68,7 +70,15 @@ import {
   fxSalesReportFileBaseName,
   periodLabelFromFilters,
 } from "@/lib/fx-sales-report";
-import { heldInKztSummary } from "@/lib/currency-balance";
+import { heldInKztSummary, useCurrencyHoldings } from "@/lib/currency-balance";
+import { buildClientFxReport } from "@/lib/fx-client-report";
+import {
+  findRateOverride,
+  useFxRateOverrides,
+  useSaveFxRateOverride,
+} from "@/lib/fx-rate-overrides";
+import { balanceTone } from "@/lib/currency-balance";
+import { TrendingUp } from "lucide-react";
 
 export const Route = createFileRoute("/fx-sales")({
   head: () => ({
@@ -87,6 +97,10 @@ function parseRate(s: string): number {
 function FxSalesPage() {
   const { data: sales = [], isLoading } = useFxSales();
   const { data: currencies = [] } = useFxCurrencies();
+  const { data: holdingsData } = useCurrencyHoldings();
+  const { data: reportContacts } = useFxReportContacts();
+  const { data: rateOverrides = [] } = useFxRateOverrides();
+  const saveRateOverride = useSaveFxRateOverride();
   const addSale = useAddFxSale();
   const updateSale = useUpdateFxSale();
   const deleteSale = useDeleteFxSale();
@@ -109,21 +123,62 @@ function FxSalesPage() {
   const [newSymbol, setNewSymbol] = useState("");
   const printRef = useRef<HTMLDivElement>(null);
 
+  const [saleWarning, setSaleWarning] = useState<string | null>(null);
+  const [rateEditCode, setRateEditCode] = useState<string | null>(null);
+  const [overrideRateInput, setOverrideRateInput] = useState("");
+
   const currencyLabels = useMemo(
     () => new Map(currencies.map((c) => [c.code, c.label])),
     [currencies],
   );
 
   const filtered = useMemo(() => filterFxSales(sales, filters), [sales, filters]);
+
+  const rateOverrideMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (filters.period === "all") return map;
+    let dateFrom = filters.dateFrom;
+    let dateTo = filters.dateTo;
+    if (filters.period !== "custom") {
+      const r = applyPeriodPreset(filters.period);
+      dateFrom = r.dateFrom;
+      dateTo = r.dateTo;
+    }
+    if (!dateFrom || !dateTo) return map;
+    for (const c of currencies) {
+      const o = findRateOverride(rateOverrides, c.code, dateFrom, dateTo);
+      if (o != null) map.set(c.code, o);
+    }
+    return map;
+  }, [rateOverrides, filters, currencies]);
+
   const summary = useMemo(
-    () => aggregateByCurrency(filtered, currencies),
-    [filtered, currencies],
+    () => aggregateByCurrency(filtered, currencies, rateOverrideMap),
+    [filtered, currencies, rateOverrideMap],
   );
   const daily = useMemo(() => aggregateByDay(filtered), [filtered]);
   const totalKzt = useMemo(() => summary.reduce((s, r) => s + r.kztTotal, 0), [summary]);
+  const clientRows = useMemo(() => {
+    if (!reportContacts) return [];
+    return buildClientFxReport(reportContacts.contacts, reportContacts.txs, {
+      contactId: filters.contactId || undefined,
+      currencies: filters.currencies.length ? filters.currencies : undefined,
+    });
+  }, [reportContacts, filters.contactId, filters.currencies]);
+
   const heldInKzt = useMemo(
     () => heldInKztSummary(filtered, currencies),
     [filtered, currencies],
+  );
+
+  const potRemainders = useMemo(
+    () =>
+      (holdingsData?.cards ?? []).map((c) => ({
+        currency: c.label,
+        karyz: c.karyzRemainder,
+        salynghan: c.salynghanRemainder,
+      })),
+    [holdingsData],
   );
 
   const previewKzt = useMemo(() => {
@@ -169,7 +224,34 @@ function FxSalesPage() {
         rate: r,
         note: note.trim() || undefined,
       },
-      { onSuccess: resetForm },
+      {
+        onSuccess: (res) => {
+          resetForm();
+          setSaleWarning(res?.warning ?? null);
+        },
+      },
+    );
+  }
+
+  function saveRateOverrideForCurrency(code: string) {
+    const rateVal = parseRate(overrideRateInput);
+    if (rateVal <= 0) return;
+    let dateFrom = filters.dateFrom;
+    let dateTo = filters.dateTo;
+    if (filters.period !== "custom" && filters.period !== "all") {
+      const r = applyPeriodPreset(filters.period);
+      dateFrom = r.dateFrom;
+      dateTo = r.dateTo;
+    }
+    if (!dateFrom || !dateTo) return;
+    saveRateOverride.mutate(
+      {
+        currencyCode: code,
+        periodStart: dateFrom,
+        periodEnd: dateTo,
+        overrideRate: rateVal,
+      },
+      { onSuccess: () => setRateEditCode(null) },
     );
   }
 
@@ -183,6 +265,8 @@ function FxSalesPage() {
         periodLabel: periodLabelFromFilters(filters),
         currencyLabels,
         heldInKzt,
+        potRemainders,
+        clientRows,
       });
       const baseName = fxSalesReportFileBaseName();
       await saveExcelToDirectory(buffer, baseName);
@@ -217,6 +301,12 @@ function FxSalesPage() {
               <Link to="/currency-balance">
                 <Wallet className="h-4 w-4" />
                 Баланс валют
+              </Link>
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1" asChild>
+              <Link to="/fx-risk">
+                <TrendingUp className="h-4 w-4" />
+                Риск
               </Link>
             </Button>
             <Button
@@ -363,8 +453,56 @@ function FxSalesPage() {
                   }
                 />
               </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Источник (USD)</div>
+                  <Select
+                    value={filters.source}
+                    onValueChange={(v) =>
+                      setFilters((f) => ({ ...f, source: v as SourceFilter }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все</SelectItem>
+                      <SelectItem value="karyz">Только Қарыз</SelectItem>
+                      <SelectItem value="salynghan">Только Салынған</SelectItem>
+                      <SelectItem value="mixed">Смешанные</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Клиент (отчёт)</div>
+                  <Select
+                    value={filters.contactId || "__all__"}
+                    onValueChange={(v) =>
+                      setFilters((f) => ({ ...f, contactId: v === "__all__" ? "" : v }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Все клиенты" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Все клиенты</SelectItem>
+                      {(reportContacts?.contacts ?? []).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardContent>
           </Card>
+        )}
+
+        {saleWarning && (
+          <div className="rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm print:hidden">
+            {saleWarning}
+          </div>
         )}
 
         <div className="grid gap-3 lg:grid-cols-3">
@@ -395,7 +533,8 @@ function FxSalesPage() {
                       <th className="px-3 py-2">Валюта</th>
                       <th className="px-3 py-2">Объём</th>
                       <th className="px-3 py-2">₸</th>
-                      <th className="px-3 py-2">Ср. курс</th>
+                      <th className="px-3 py-2">Ср.взв.</th>
+                      <th className="px-3 py-2">Курс итог</th>
                       <th className="px-3 py-2">Оп.</th>
                     </tr>
                   </thead>
@@ -405,7 +544,22 @@ function FxSalesPage() {
                         <td className="px-3 py-2 font-medium">{row.label}</td>
                         <td className="px-3 py-2 tabular-nums">{fmt(row.foreignTotal)}</td>
                         <td className="px-3 py-2 tabular-nums">{fmt(row.kztTotal)} ₸</td>
-                        <td className="px-3 py-2 tabular-nums">{fmt(row.avgRate, 4)}</td>
+                        <td className="px-3 py-2 tabular-nums">{fmt(row.weightedRate, 4)}</td>
+                        <td className="px-3 py-2 tabular-nums">
+                          <button
+                            type="button"
+                            className={cn(
+                              "underline-offset-2 hover:underline print:no-underline",
+                              row.effectiveRate !== row.weightedRate && "font-semibold text-primary",
+                            )}
+                            onClick={() => {
+                              setRateEditCode(row.currencyCode);
+                              setOverrideRateInput(String(row.effectiveRate).replace(".", ","));
+                            }}
+                          >
+                            {fmt(row.effectiveRate, 4)}
+                          </button>
+                        </td>
                         <td className="px-3 py-2 tabular-nums">{row.count}</td>
                       </tr>
                     ))}
@@ -438,6 +592,82 @@ function FxSalesPage() {
                       <td className="px-3 py-2 tabular-nums">{fmt(row.foreignTotal)}</td>
                       <td className="px-3 py-2 tabular-nums text-success">{fmt(row.kztTotal)} ₸</td>
                       <td className="px-3 py-2 tabular-nums">{row.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        )}
+
+        {potRemainders.length > 0 && (
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Остатки котла (Қарыз / Салынған)</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2">Валюта</th>
+                    <th className="px-3 py-2">Остаток Қарыз</th>
+                    <th className="px-3 py-2">Остаток Салынған</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {potRemainders.map((p) => (
+                    <tr key={p.currency} className="border-b border-border/60">
+                      <td className="px-3 py-2 font-medium">{p.currency}</td>
+                      <td className={cn("px-3 py-2 tabular-nums", balanceTone(p.karyz))}>
+                        {fmt(p.karyz)}
+                      </td>
+                      <td className={cn("px-3 py-2 tabular-nums", balanceTone(p.salynghan))}>
+                        {fmt(p.salynghan)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        )}
+
+        {clientRows.length > 0 && (
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">
+                По клиентам{filters.contactId ? "" : " (все)"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2">Клиент</th>
+                    <th className="px-3 py-2">Вал.</th>
+                    <th className="px-3 py-2">Қарыз</th>
+                    <th className="px-3 py-2">Салынған</th>
+                    <th className="px-3 py-2">Баланс</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientRows.map((row) => (
+                    <tr key={`${row.contactId}-${row.currency}`} className="border-b border-border/60">
+                      <td className="px-3 py-2">
+                        <Link
+                          to="/contacts/$contactId"
+                          params={{ contactId: row.contactId }}
+                          className="text-primary hover:underline"
+                        >
+                          {row.name}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2">{row.currency}</td>
+                      <td className="px-3 py-2 tabular-nums">{fmt(row.karyzTotal)}</td>
+                      <td className="px-3 py-2 tabular-nums">{fmt(row.salynghanTotal)}</td>
+                      <td className={cn("px-3 py-2 tabular-nums", balanceTone(row.balance))}>
+                        {fmt(row.balance)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -616,6 +846,31 @@ function FxSalesPage() {
         </DialogContent>
       </Dialog>
 
+      {rateEditCode && (
+        <Dialog open={!!rateEditCode} onOpenChange={(v) => !v && setRateEditCode(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Курс итог за период — {rateEditCode}</DialogTitle>
+            </DialogHeader>
+            <p className="text-xs text-muted-foreground">
+              Средневзвешенный курс считается автоматически. Здесь можно задать ручную корректировку
+              для отчёта за выбранный период.
+            </p>
+            <Input
+              placeholder="Курс"
+              value={overrideRateInput}
+              onChange={(e) => setOverrideRateInput(formatAmountInput(e.target.value))}
+            />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRateEditCode(null)}>
+                Отмена
+              </Button>
+              <Button onClick={() => saveRateOverrideForCurrency(rateEditCode)}>Сохранить</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
       <style>{`
         @media print {
           body * { visibility: hidden; }
@@ -652,6 +907,9 @@ function SaleRow({
       </span>
       {sale.note && (
         <span className="max-w-[200px] truncate text-xs text-muted-foreground">{sale.note}</span>
+      )}
+      {sale.allocationLabel && (
+        <span className="w-full text-[10px] text-muted-foreground">{sale.allocationLabel}</span>
       )}
       <div className="ml-auto flex gap-1 opacity-60 group-hover:opacity-100 print:hidden">
         <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onEdit}>

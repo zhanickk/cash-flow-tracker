@@ -11,6 +11,23 @@ import {
   openCurrencies,
   type ContactCurrency,
 } from "@/lib/contact-currencies";
+import { inferTxType, type ContactTxType } from "@/lib/fx-pots";
+import { recomputeUsdSaleAllocations } from "@/lib/fx-sales";
+
+function invalidateFxFromContacts(qc: ReturnType<typeof useQueryClient>, contactId?: string) {
+  if (contactId) {
+    qc.invalidateQueries({ queryKey: ["contact-detail", contactId] });
+    qc.invalidateQueries({ queryKey: ["contact-last5", contactId] });
+  }
+  qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+  qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
+  qc.invalidateQueries({ queryKey: ["fx-sales"] });
+  qc.invalidateQueries({ queryKey: ["fx-risk-dashboard"] });
+}
+
+async function afterContactLedgerChange(currency?: string) {
+  if (currency === "USD" || !currency) await recomputeUsdSaleAllocations();
+}
 
 export type Contact = Tables<"contacts">;
 export type ContactTransaction = Tables<"contact_transactions">;
@@ -182,7 +199,9 @@ export function useAddContactTransaction() {
       currency: Currency;
       amount: number;
       note?: string;
+      txType?: ContactTxType;
     }): Promise<{ id: string }> => {
+      const txType = input.txType ?? inferTxType(input.amount);
       const { data, error } = await supabase
         .from("contact_transactions")
         .insert({
@@ -191,6 +210,7 @@ export function useAddContactTransaction() {
           amount: input.amount,
           note: input.note ?? null,
           source: "app",
+          tx_type: txType,
         })
         .select("id, contacts(name)")
         .single();
@@ -202,12 +222,11 @@ export function useAddContactTransaction() {
           input.note ? ` — ${input.note}` : ""
         }`,
       });
+      if (input.currency === "USD") await recomputeUsdSaleAllocations();
       return data;
     },
     onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["contact-detail", vars.contactId] });
-      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
-      qc.invalidateQueries({ queryKey: ["contact-last5", vars.contactId] });
+      invalidateFxFromContacts(qc, vars.contactId);
     },
   });
 }
@@ -247,11 +266,10 @@ export function useUpdateContactTransaction() {
           row.note ? ` — ${row.note}` : ""
         }`,
       });
+      await afterContactLedgerChange(row.currency);
     },
     onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: ["contact-detail", vars.contactId] });
-      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
-      qc.invalidateQueries({ queryKey: ["contact-last5", vars.contactId] });
+      invalidateFxFromContacts(qc, vars.contactId);
     },
   });
 }
@@ -356,6 +374,7 @@ export function useImportContactBalancesFromExcel() {
           amount: delta,
           note: `Сверка баланса из Excel (лист ${input.sheetLabel}) — «${target.rawName}»: ${current.toLocaleString("ru-RU")} → ${target.targetBalance.toLocaleString("ru-RU")}`,
           source: "excel_import",
+          tx_type: inferTxType(delta, "excel_import"),
         });
         applyPendingDelta(contact.id, target.currency, delta);
       }
@@ -373,6 +392,7 @@ export function useImportContactBalancesFromExcel() {
             amount: -balance,
             note: `Сверка: контакт отсутствует на листе Excel (лист ${input.sheetLabel}) — обнуление`,
             source: "excel_import",
+            tx_type: inferTxType(-balance, "excel_import"),
           });
         }
       }
@@ -380,6 +400,7 @@ export function useImportContactBalancesFromExcel() {
       if (inserts.length > 0) {
         const { error } = await supabase.from("contact_transactions").insert(inserts);
         if (error) throw error;
+        await afterContactLedgerChange();
       }
 
       await insertHistory({
@@ -394,9 +415,7 @@ export function useImportContactBalancesFromExcel() {
       };
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["contact-detail"] });
-      qc.invalidateQueries({ queryKey: ["contact-last5"] });
-      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+      invalidateFxFromContacts(qc);
     },
   });
 }
@@ -426,14 +445,11 @@ export function useDeleteContactTransaction() {
           row.note ? ` — ${row.note}` : ""
         }`,
       });
+      await afterContactLedgerChange(row.currency);
       return { contact_id: row.contact_id };
     },
     onSuccess: (data) => {
-      if (data?.contact_id) {
-        qc.invalidateQueries({ queryKey: ["contact-detail", data.contact_id] });
-        qc.invalidateQueries({ queryKey: ["contact-last5", data.contact_id] });
-      }
-      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+      invalidateFxFromContacts(qc, data?.contact_id ?? undefined);
     },
   });
 }

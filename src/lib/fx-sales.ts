@@ -3,6 +3,18 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
 import { fmt, txLabel, type Currency, type Transaction } from "@/lib/cash-shared";
+import {
+  aggregatePotFromContacts,
+  allocationLabel,
+  replayUsdSales,
+  weightedAvgRate,
+  type ContactTx,
+} from "@/lib/fx-pots";
+import {
+  computeUsdAllocationForNewSale,
+  recomputeUsdSaleAllocations,
+} from "@/lib/fx-allocation-persist";
+import { mappedToFxSaleFields } from "@/lib/fx-sale-map";
 
 export type FxCurrency = Tables<"fx_currencies">;
 type CashTxRow = Tables<"cash_transactions">;
@@ -16,9 +28,16 @@ export interface FxSale {
   kztAmount: number;
   note?: string;
   cashierName?: string;
+  /** Доля продажи из Қарыз (USD, общий котёл) */
+  karyzAmount?: number;
+  /** Доля из Салынған */
+  salynghanAmount?: number;
+  allocationLabel?: string;
 }
 
 export type PeriodPreset = "all" | "day" | "week" | "month" | "custom";
+
+export type SourceFilter = "all" | "karyz" | "salynghan" | "mixed";
 
 export interface FxSalesFilters {
   period: PeriodPreset;
@@ -29,6 +48,8 @@ export interface FxSalesFilters {
   kztMax: string;
   rateMin: string;
   rateMax: string;
+  source: SourceFilter;
+  contactId: string;
 }
 
 export interface FxCurrencySummary {
@@ -37,6 +58,10 @@ export interface FxCurrencySummary {
   foreignTotal: number;
   kztTotal: number;
   avgRate: number;
+  /** Средневзвешенный курс Σ(объём×курс)/Σ(объём) */
+  weightedRate: number;
+  /** Ручная корректировка (если задана) */
+  effectiveRate: number;
   count: number;
 }
 
@@ -53,17 +78,11 @@ const TX_KEY = ["cash-transactions"];
 const HISTORY_KEY = ["cash-history"];
 
 function cashTxToSale(r: CashTxRow): FxSale {
-  const foreignAmount = Number(r.amount);
-  const rate = Number(r.rate ?? 0);
-  return {
-    id: r.id,
-    occurredAt: new Date(r.ts).getTime(),
-    currencyCode: r.currency,
-    foreignAmount,
-    rate,
-    kztAmount: foreignAmount * rate,
-    note: r.name ?? undefined,
-  };
+  return mappedToFxSaleFields(r) as FxSale;
+}
+
+export function cashRowsToSales(rows: CashTxRow[]): FxSale[] {
+  return rows.map(cashTxToSale);
 }
 
 function saleToTransaction(s: FxSale): Transaction {
@@ -96,6 +115,8 @@ export function defaultFilters(): FxSalesFilters {
     kztMax: "",
     rateMin: "",
     rateMax: "",
+    source: "all",
+    contactId: "",
   };
 }
 
@@ -176,36 +197,62 @@ export function filterFxSales(sales: FxSale[], filters: FxSalesFilters): FxSale[
     if (kztMax !== undefined && s.kztAmount > kztMax) return false;
     if (rateMin !== undefined && s.rate < rateMin) return false;
     if (rateMax !== undefined && s.rate > rateMax) return false;
+    if (filters.source !== "all" && s.currencyCode === "USD") {
+      const k = s.karyzAmount ?? 0;
+      const sh = s.salynghanAmount ?? 0;
+      if (filters.source === "karyz" && !(k > 0 && sh === 0)) return false;
+      if (filters.source === "salynghan" && !(sh > 0 && k === 0)) return false;
+      if (filters.source === "mixed" && !(k > 0 && sh > 0)) return false;
+    }
+    if (filters.source !== "all" && s.currencyCode !== "USD") return false;
     return true;
   });
+}
+
+export function filtersToPeriodTs(filters: FxSalesFilters): { fromTs: number; toTs: number } {
+  let fromTs = filters.dateFrom ? startOfDay(filters.dateFrom) : -Infinity;
+  let toTs = filters.dateTo ? endOfDay(filters.dateTo) : Infinity;
+  if (filters.period !== "custom" && filters.period !== "all") {
+    const range = applyPeriodPreset(filters.period);
+    fromTs = startOfDay(range.dateFrom);
+    toTs = endOfDay(range.dateTo);
+  }
+  return { fromTs, toTs };
 }
 
 export function aggregateByCurrency(
   sales: FxSale[],
   currencies: FxCurrency[],
+  rateOverrides?: Map<string, number>,
 ): FxCurrencySummary[] {
   const labelByCode = new Map(currencies.map((c) => [c.code, c.label]));
-  const map = new Map<string, { foreign: number; kzt: number; rateSum: number; count: number }>();
+  const map = new Map<string, FxSale[]>();
 
   for (const s of sales) {
-    const prev = map.get(s.currencyCode) ?? { foreign: 0, kzt: 0, rateSum: 0, count: 0 };
-    map.set(s.currencyCode, {
-      foreign: prev.foreign + s.foreignAmount,
-      kzt: prev.kzt + s.kztAmount,
-      rateSum: prev.rateSum + s.rate,
-      count: prev.count + 1,
-    });
+    const list = map.get(s.currencyCode) ?? [];
+    list.push(s);
+    map.set(s.currencyCode, list);
   }
 
   return [...map.entries()]
-    .map(([currencyCode, v]) => ({
-      currencyCode,
-      label: labelByCode.get(currencyCode) ?? currencyCode,
-      foreignTotal: v.foreign,
-      kztTotal: v.kzt,
-      avgRate: v.count > 0 ? v.rateSum / v.count : 0,
-      count: v.count,
-    }))
+    .map(([currencyCode, list]) => {
+      const foreignTotal = list.reduce((a, s) => a + s.foreignAmount, 0);
+      const kztTotal = list.reduce((a, s) => a + s.kztAmount, 0);
+      const weightedRate = weightedAvgRate(list);
+      const avgRate = list.length > 0 ? list.reduce((a, s) => a + s.rate, 0) / list.length : 0;
+      const override = rateOverrides?.get(currencyCode);
+      const effectiveRate = override ?? weightedRate;
+      return {
+        currencyCode,
+        label: labelByCode.get(currencyCode) ?? currencyCode,
+        foreignTotal,
+        kztTotal,
+        avgRate,
+        weightedRate,
+        effectiveRate,
+        count: list.length,
+      };
+    })
     .sort((a, b) => b.kztTotal - a.kztTotal);
 }
 
@@ -262,12 +309,31 @@ export function useFxSales() {
   });
 }
 
+export function useFxReportContacts() {
+  return useQuery({
+    queryKey: ["fx-report-contacts"],
+    queryFn: async () => {
+      const [{ data: contacts, error: cErr }, { data: txs, error: tErr }] = await Promise.all([
+        supabase.from("contacts").select("*").order("name"),
+        supabase.from("contact_transactions").select("*"),
+      ]);
+      if (cErr) throw cErr;
+      if (tErr) throw tErr;
+      return { contacts: contacts ?? [], txs: txs ?? [] };
+    },
+  });
+}
+
 function invalidateCashAndSales(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: SALES_KEY });
   qc.invalidateQueries({ queryKey: TX_KEY });
   qc.invalidateQueries({ queryKey: HISTORY_KEY });
   qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
+  qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+  qc.invalidateQueries({ queryKey: ["fx-risk-dashboard"] });
 }
+
+export { recomputeUsdSaleAllocations } from "@/lib/fx-allocation-persist";
 
 /* ============== Mutations ============== */
 
@@ -313,6 +379,21 @@ export function useAddFxSale() {
       note?: string;
     }) => {
       const id = crypto.randomUUID();
+      let karyzAmount = 0;
+      let salynghanAmount = 0;
+      let allocWarning: string | undefined;
+
+      if (input.currencyCode === "USD") {
+        const alloc = await computeUsdAllocationForNewSale({
+          foreignAmount: input.foreignAmount,
+          rate: input.rate,
+          occurredAt: input.occurredAt,
+        });
+        karyzAmount = alloc.karyzAmount;
+        salynghanAmount = alloc.salynghanAmount;
+        allocWarning = alloc.warning;
+      }
+
       const tx: Transaction = {
         id,
         kind: "sell",
@@ -330,11 +411,19 @@ export function useAddFxSale() {
         rate: input.rate,
         name: input.note?.trim() || null,
         ts: input.occurredAt,
+        karyz_amount: karyzAmount,
+        salynghan_amount: salynghanAmount,
       });
       if (error) throw error;
-      await insertHistory({ action: "add", kind: "sell", summary: `Добавлено — ${txLabel(tx)}` });
+      let summary = `Добавлено — ${txLabel(tx)}`;
+      if (allocWarning) summary += ` · ${allocWarning}`;
+      await insertHistory({ action: "add", kind: "sell", summary });
+      return { warning: allocWarning };
     },
-    onSuccess: () => invalidateCashAndSales(qc),
+    onSuccess: async () => {
+      await recomputeUsdSaleAllocations();
+      invalidateCashAndSales(qc);
+    },
   });
 }
 
@@ -393,7 +482,10 @@ export function useUpdateFxSale() {
         summary: `Изменено — ${txLabel(next)} (${changes.join(", ") || "без изменений"})`,
       });
     },
-    onSuccess: () => invalidateCashAndSales(qc),
+    onSuccess: async () => {
+      await recomputeUsdSaleAllocations();
+      invalidateCashAndSales(qc);
+    },
   });
 }
 
@@ -409,6 +501,9 @@ export function useDeleteFxSale() {
         summary: `Удалено — ${txLabel(saleToTransaction(old))}`,
       });
     },
-    onSuccess: () => invalidateCashAndSales(qc),
+    onSuccess: async () => {
+      await recomputeUsdSaleAllocations();
+      invalidateCashAndSales(qc);
+    },
   });
 }
