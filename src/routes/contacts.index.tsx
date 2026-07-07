@@ -53,6 +53,18 @@ const CURRENCY_ICON: Partial<Record<ContactCurrency, React.ComponentType<{ class
   USD: DollarSign,
 };
 
+/** Основные колонки — всегда первые, дополнительные только если есть счета. */
+const PRIMARY_CURRENCIES: ContactCurrency[] = ["USD", "KZT"];
+const OTHER_CURRENCIES: ContactCurrency[] = ["EUR", "RUB", "KGS", "CNY", "GOLD"];
+
+function orderedActiveCurrencies(active: Set<ContactCurrency>): ContactCurrency[] {
+  const ordered: ContactCurrency[] = [];
+  for (const code of [...PRIMARY_CURRENCIES, ...OTHER_CURRENCIES]) {
+    if (active.has(code)) ordered.push(code);
+  }
+  return ordered;
+}
+
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
@@ -66,20 +78,22 @@ function ContactCurrencySection({
   currency,
   contacts,
   onConvert,
+  className,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   currency: ContactCurrency;
   contacts: ContactWithBalance[];
   onConvert: (contact: ContactWithBalance) => void;
+  className?: string;
 }) {
   return (
-    <div>
-      <div className="mb-2 flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+    <div className={cn("flex h-full min-h-0 flex-col", className)}>
+      <div className="mb-2 flex shrink-0 items-center gap-1.5 text-sm font-medium text-muted-foreground">
         <Icon className="h-4 w-4" />
         {title}
       </div>
-      <div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-card">
+      <div className="flex min-h-0 flex-1 flex-col divide-y divide-border overflow-y-auto rounded-lg border border-border bg-card">
         {contacts.length === 0 && (
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">Нет контактов</p>
         )}
@@ -193,7 +207,7 @@ function ContactsPage() {
     for (const c of searched) {
       for (const code of c.activeCurrencies) set.add(code);
     }
-    return CONTACT_CURRENCIES.map((x) => x.code).filter((code) => set.has(code));
+    return orderedActiveCurrencies(set);
   }, [searched]);
 
   const sections = useMemo(() => {
@@ -216,14 +230,14 @@ function ContactsPage() {
   return (
     <div className="min-h-screen bg-background pb-16">
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-3 py-3">
+        <div className="mx-auto flex max-w-7xl items-center gap-3 px-3 py-3">
           <Link to="/" className="text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-5 w-5" />
           </Link>
           <Users className="h-5 w-5 text-primary" />
           <div className="text-lg font-semibold">Контакты</div>
         </div>
-        <div className="mx-auto flex max-w-3xl flex-col gap-2 px-3 pb-3 sm:flex-row">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-3 pb-3 sm:flex-row">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
@@ -259,7 +273,7 @@ function ContactsPage() {
             <span className="hidden sm:inline">Контакт</span>
           </Button>
         </div>
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-3 pb-3">
+        <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 pb-3">
           <Button
             size="sm"
             className="flex-1 gap-1 bg-convert text-convert-foreground hover:bg-convert/90"
@@ -281,7 +295,7 @@ function ContactsPage() {
             <span className="hidden sm:inline">История конвертаций</span>
           </Button>
         </div>
-        <div className="mx-auto flex max-w-3xl items-center gap-2 px-3 pb-3">
+        <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 pb-3">
           <Button
             size="sm"
             variant="outline"
@@ -294,7 +308,7 @@ function ContactsPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-3 py-3">
+      <main className="mx-auto w-full max-w-7xl px-3 py-3">
         {isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Загрузка…</p>}
         {!isLoading && !hasResults && (
           <p className="py-8 text-center text-sm text-muted-foreground">
@@ -306,10 +320,10 @@ function ContactsPage() {
         {!isLoading && hasResults && (
           <div
             className={cn(
-              "grid gap-4",
-              currencyFilter === "all" && sections.length > 1
-                ? "sm:grid-cols-2"
-                : "grid-cols-1",
+              "flex gap-4",
+              currencyFilter === "all" && sections.length > 2
+                ? "overflow-x-auto pb-2 snap-x snap-mandatory"
+                : "w-full",
             )}
           >
             {sections.map(({ code, contacts: list }) => (
@@ -319,6 +333,12 @@ function ContactsPage() {
                 icon={CURRENCY_ICON[code] ?? Coins}
                 currency={code}
                 contacts={list}
+                className={cn(
+                  "snap-start",
+                  currencyFilter !== "all" || sections.length <= 2
+                    ? "min-w-0 flex-1"
+                    : "w-[min(340px,calc(100vw-2rem))] shrink-0",
+                )}
                 onConvert={(c) => {
                   setConversionFixedContact({ id: c.id, name: c.name });
                   setConversionOpen(true);
