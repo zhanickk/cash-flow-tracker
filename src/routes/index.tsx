@@ -80,6 +80,12 @@ import {
   type ContactWithBalance,
 } from "@/lib/contacts";
 import {
+  cashContactNote,
+  contactSyncPayload,
+  isCashContactLinkedTx,
+  resolveContactTxId,
+} from "@/lib/cash-contact-sync";
+import {
   type Currency,
   CURRENCIES,
   FX_CURRENCIES,
@@ -254,6 +260,7 @@ function Index() {
   const logout = useLogout();
 
   const { data: contactsWithBalances = [] } = useContactsWithBalances();
+  const addContactTx = useAddContactTransaction();
   const deleteContactTx = useDeleteContactTransaction();
   const updateContactTx = useUpdateContactTransaction();
   const contactMap = useMemo(() => {
@@ -301,43 +308,84 @@ function Index() {
     addCashTx.mutate(full);
   }
 
+  async function addContactLinkedTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
+    const localId = tx.id ?? crypto.randomUUID();
+    const full: Transaction = { ...tx, id: localId, ts: Date.now() };
+    await addCashTx.mutateAsync(full);
+    if (!isCashContactLinkedTx(full)) return;
+
+    try {
+      const contactId = await findOrCreateContactByName(full.name!.trim());
+      const note = cashContactNote(full)!;
+      const { amount, currency } = contactSyncPayload(full, {});
+      const row = await addContactTx.mutateAsync({ contactId, currency, amount, note });
+      await updateCashTx.mutateAsync({
+        id: localId,
+        patch: { contactTxId: row.id },
+        old: full,
+      });
+    } catch {
+      // касса сохранена; синхронизацию с контактом можно повторить при редактировании
+    }
+  }
+
+  async function syncContactFromCashEdit(old: Transaction, patch: Partial<Transaction>) {
+    if (!isCashContactLinkedTx(old)) return;
+
+    const contactName = (patch.name ?? old.name)?.trim();
+    if (!contactName) return;
+
+    const contactId = await findOrCreateContactByName(contactName);
+    let contactTxId = await resolveContactTxId(old, contactId);
+    const { amount, currency } = contactSyncPayload(old, patch);
+
+    if (contactTxId) {
+      await updateContactTx.mutateAsync({ id: contactTxId, contactId, amount, currency });
+    } else {
+      const note = cashContactNote(old)!;
+      const row = await addContactTx.mutateAsync({ contactId, currency, amount, note });
+      contactTxId = row.id;
+    }
+
+    if (!old.contactTxId && contactTxId) {
+      await updateCashTx.mutateAsync({
+        id: old.id,
+        patch: { contactTxId },
+        old: { ...old, ...patch },
+      });
+    }
+  }
+
   async function updateTx(id: string, patch: Partial<Transaction>) {
     const old = transactions.find((t) => t.id === id);
     if (!old) return;
     await updateCashTx.mutateAsync({ id, patch, old });
 
-    const isLinkedContact =
-      old.contactTxId &&
-      ((old.kind === "income" && old.expenseType !== "regular") ||
-        (old.kind === "expense" && old.expenseType === "person"));
-    if (!isLinkedContact) return;
-
-    const newAmount = patch.amount ?? old.amount;
-    const newCurrency = patch.currency ?? old.currency;
-    const signedAmount = old.kind === "income" ? newAmount : -newAmount;
-    const contactId = old.name?.trim()
-      ? contactMap.get(old.name.trim().toLowerCase())?.id
-      : undefined;
-    if (!contactId) return;
-
     try {
-      await updateContactTx.mutateAsync({
-        id: old.contactTxId!,
-        contactId,
-        amount: signedAmount,
-        currency: newCurrency,
-      });
+      await syncContactFromCashEdit(old, patch);
     } catch {
       // касса обновлена; синхронизацию с контактом можно повторить вручную
     }
   }
 
-  function deleteTx(id: string) {
+  async function deleteTx(id: string) {
     const old = transactions.find((t) => t.id === id);
     if (!old) return;
-    deleteCashTx.mutate(old);
-    if (old.contactTxId) {
-      deleteContactTx.mutate(old.contactTxId);
+    await deleteCashTx.mutateAsync(old);
+
+    if (!isCashContactLinkedTx(old)) return;
+
+    const contactName = old.name?.trim();
+    if (!contactName) return;
+
+    try {
+      const contactId = await findOrCreateContactByName(contactName);
+      const contactTxId = await resolveContactTxId(old, contactId);
+      if (contactTxId) {
+        await deleteContactTx.mutateAsync(contactTxId);
+      }
+    } catch {
+      // касса удалена; связанную операцию контакта можно удалить вручную
     }
   }
 
@@ -504,7 +552,7 @@ function Index() {
         />
         <IncomeCard
           txs={transactions.filter((t) => t.kind === "income")}
-          onAdd={addTx}
+          onAdd={addContactLinkedTx}
           onUpdate={updateTx}
           onDelete={deleteTx}
           contacts={contactsWithBalances}
@@ -512,7 +560,7 @@ function Index() {
         />
         <ExpenseCombinedCard
           txs={transactions.filter((t) => t.kind === "expense")}
-          onAdd={addTx}
+          onAdd={addContactLinkedTx}
           onUpdate={updateTx}
           onDelete={deleteTx}
           contacts={contactsWithBalances}
@@ -1712,7 +1760,8 @@ function ContactAutocompleteField({
   );
 }
 
-interface ContactAddProps extends AddProps {
+interface ContactAddProps extends Omit<AddProps, "onAdd"> {
+  onAdd: (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => void | Promise<void>;
   contacts: ContactWithBalance[];
   contactMap: Map<string, ContactWithBalance>;
 }
@@ -1725,36 +1774,19 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: Co
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
-  const addContactTx = useAddContactTransaction();
 
   const submit = async () => {
     const a = parseAmount(amount);
     const trimmed = name.trim();
     if (a <= 0) return;
     if (!freeMode && !trimmed) return;
-    const localId = crypto.randomUUID();
-    onAdd({
-      id: localId,
+    await onAdd({
       kind: "income",
       currency,
       amount: a,
       name: trimmed || undefined,
       expenseType: freeMode ? "regular" : "person",
     });
-    if (!freeMode && trimmed) {
-      try {
-        const contactId = await findOrCreateContactByName(trimmed);
-        const row = await addContactTx.mutateAsync({
-          contactId,
-          currency,
-          amount: a,
-          note: "Касса: приход",
-        });
-        onUpdate(localId, { contactTxId: row.id });
-      } catch {
-        // локальная запись уже сохранена, синхронизацию с контактом можно повторить позже
-      }
-    }
     setAmount("");
     setName("");
     nameRef.current?.focus();
@@ -1830,36 +1862,19 @@ function ExpenseCombinedCard({
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
-  const addContactTx = useAddContactTransaction();
 
   const submit = async () => {
     const a = parseAmount(amount);
     const trimmed = name.trim();
     if (a <= 0) return;
     if (!freeMode && !trimmed) return;
-    const localId = crypto.randomUUID();
-    onAdd({
-      id: localId,
+    await onAdd({
       kind: "expense",
       currency,
       amount: a,
       name: trimmed || undefined,
       expenseType: freeMode ? "regular" : "person",
     });
-    if (!freeMode && trimmed) {
-      try {
-        const contactId = await findOrCreateContactByName(trimmed);
-        const row = await addContactTx.mutateAsync({
-          contactId,
-          currency,
-          amount: -a,
-          note: "Касса: расход",
-        });
-        onUpdate(localId, { contactTxId: row.id });
-      } catch {
-        // локальная запись уже сохранена, синхронизацию с контактом можно повторить позже
-      }
-    }
     setAmount("");
     setName("");
     nameRef.current?.focus();
