@@ -201,6 +201,9 @@ function FxSalesPage() {
             </Button>
             <Banknote className="h-5 w-5 text-primary" />
             <h1 className="text-lg font-semibold">Продажа валют за тенге</h1>
+            <p className="hidden text-xs text-muted-foreground sm:block">
+              Данные синхронизированы с кассой (раздел «Продажа валюты за тенге»)
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button

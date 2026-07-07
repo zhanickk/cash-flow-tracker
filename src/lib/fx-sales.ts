@@ -2,11 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
-import { getCachedCashierName } from "@/lib/auth";
-import { fmt } from "@/lib/cash-shared";
+import { fmt, txLabel, type Currency, type Transaction } from "@/lib/cash-shared";
 
 export type FxCurrency = Tables<"fx_currencies">;
-export type FxSaleRow = Tables<"fx_sales">;
+type CashTxRow = Tables<"cash_transactions">;
 
 export interface FxSale {
   id: string;
@@ -50,17 +49,32 @@ export interface FxDaySummary {
 
 const SALES_KEY = ["fx-sales"];
 const CURRENCIES_KEY = ["fx-currencies"];
+const TX_KEY = ["cash-transactions"];
+const HISTORY_KEY = ["cash-history"];
 
-function rowToSale(r: FxSaleRow): FxSale {
+function cashTxToSale(r: CashTxRow): FxSale {
+  const foreignAmount = Number(r.amount);
+  const rate = Number(r.rate ?? 0);
   return {
     id: r.id,
-    occurredAt: new Date(r.occurred_at).getTime(),
-    currencyCode: r.currency_code,
-    foreignAmount: Number(r.foreign_amount),
-    rate: Number(r.rate),
-    kztAmount: Number(r.kzt_amount),
-    note: r.note ?? undefined,
-    cashierName: r.cashier_name ?? undefined,
+    occurredAt: new Date(r.ts).getTime(),
+    currencyCode: r.currency,
+    foreignAmount,
+    rate,
+    kztAmount: foreignAmount * rate,
+    note: r.name ?? undefined,
+  };
+}
+
+function saleToTransaction(s: FxSale): Transaction {
+  return {
+    id: s.id,
+    kind: "sell",
+    ts: s.occurredAt,
+    currency: s.currencyCode as Currency,
+    amount: s.foreignAmount,
+    rate: s.rate,
+    name: s.note,
   };
 }
 
@@ -238,13 +252,20 @@ export function useFxSales() {
     queryKey: SALES_KEY,
     queryFn: async (): Promise<FxSale[]> => {
       const { data, error } = await supabase
-        .from("fx_sales")
+        .from("cash_transactions")
         .select("*")
-        .order("occurred_at", { ascending: false });
+        .eq("kind", "sell")
+        .order("ts", { ascending: false });
       if (error) throw error;
-      return (data ?? []).map(rowToSale);
+      return (data ?? []).map(cashTxToSale);
     },
   });
+}
+
+function invalidateCashAndSales(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: SALES_KEY });
+  qc.invalidateQueries({ queryKey: TX_KEY });
+  qc.invalidateQueries({ queryKey: HISTORY_KEY });
 }
 
 /* ============== Mutations ============== */
@@ -290,26 +311,29 @@ export function useAddFxSale() {
       rate: number;
       note?: string;
     }) => {
-      const kztAmount = input.foreignAmount * input.rate;
-      const { error } = await supabase.from("fx_sales").insert({
-        occurred_at: input.occurredAt,
-        currency_code: input.currencyCode,
-        foreign_amount: input.foreignAmount,
+      const id = crypto.randomUUID();
+      const tx: Transaction = {
+        id,
+        kind: "sell",
+        ts: new Date(input.occurredAt).getTime(),
+        currency: input.currencyCode as Currency,
+        amount: input.foreignAmount,
         rate: input.rate,
-        kzt_amount: kztAmount,
-        note: input.note?.trim() || null,
-        cashier_name: getCachedCashierName(),
+        name: input.note?.trim() || undefined,
+      };
+      const { error } = await supabase.from("cash_transactions").insert({
+        id,
+        kind: "sell",
+        currency: input.currencyCode,
+        amount: input.foreignAmount,
+        rate: input.rate,
+        name: input.note?.trim() || null,
+        ts: input.occurredAt,
       });
       if (error) throw error;
-      await insertHistory({
-        action: "add",
-        kind: "sell",
-        summary: `FX продажа: ${input.currencyCode} ${fmt(input.foreignAmount)} × ${fmt(input.rate, 4)} = ${fmt(kztAmount)} ₸`,
-      });
+      await insertHistory({ action: "add", kind: "sell", summary: `Добавлено — ${txLabel(tx)}` });
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SALES_KEY });
-    },
+    onSuccess: () => invalidateCashAndSales(qc),
   });
 }
 
@@ -330,29 +354,45 @@ export function useUpdateFxSale() {
       const { id, old, patch } = vars;
       const foreignAmount = patch.foreignAmount ?? old.foreignAmount;
       const rate = patch.rate ?? old.rate;
-      const dbPatch: TablesUpdate<"fx_sales"> = {
-        updated_at: new Date().toISOString(),
-        kzt_amount: foreignAmount * rate,
-      };
-      if (patch.occurredAt !== undefined) dbPatch.occurred_at = patch.occurredAt;
-      if (patch.currencyCode !== undefined) dbPatch.currency_code = patch.currencyCode;
-      if (patch.foreignAmount !== undefined) dbPatch.foreign_amount = patch.foreignAmount;
+      const currency = (patch.currencyCode ?? old.currencyCode) as Currency;
+      const dbPatch: TablesUpdate<"cash_transactions"> = {};
+      if (patch.occurredAt !== undefined) dbPatch.ts = patch.occurredAt;
+      if (patch.currencyCode !== undefined) dbPatch.currency = patch.currencyCode;
+      if (patch.foreignAmount !== undefined) dbPatch.amount = patch.foreignAmount;
       if (patch.rate !== undefined) dbPatch.rate = patch.rate;
-      if (patch.note !== undefined) dbPatch.note = patch.note;
+      if (patch.note !== undefined) dbPatch.name = patch.note;
 
-      const { error } = await supabase.from("fx_sales").update(dbPatch).eq("id", id);
+      const { error } = await supabase.from("cash_transactions").update(dbPatch).eq("id", id);
       if (error) throw error;
 
-      const cur = patch.currencyCode ?? old.currencyCode;
+      const next: Transaction = {
+        id,
+        kind: "sell",
+        ts: patch.occurredAt ? new Date(patch.occurredAt).getTime() : old.occurredAt,
+        currency,
+        amount: foreignAmount,
+        rate,
+        name: patch.note === undefined ? old.note : patch.note ?? undefined,
+      };
+      const changes: string[] = [];
+      if (patch.occurredAt !== undefined)
+        changes.push(`дата: ${new Date(old.occurredAt).toLocaleString("ru-RU")} → ${new Date(patch.occurredAt).toLocaleString("ru-RU")}`);
+      if (patch.currencyCode && patch.currencyCode !== old.currencyCode)
+        changes.push(`валюта: ${old.currencyCode} → ${patch.currencyCode}`);
+      if (patch.foreignAmount !== undefined && patch.foreignAmount !== old.foreignAmount)
+        changes.push(`сумма: ${old.foreignAmount} → ${patch.foreignAmount}`);
+      if (patch.rate !== undefined && patch.rate !== old.rate)
+        changes.push(`курс: ${old.rate} → ${patch.rate}`);
+      if (patch.note !== undefined && patch.note !== (old.note ?? null))
+        changes.push(`примечание изменено`);
+
       await insertHistory({
         action: "edit",
         kind: "sell",
-        summary: `FX продажа изменена: ${cur} ${fmt(foreignAmount)} × ${fmt(rate, 4)} = ${fmt(foreignAmount * rate)} ₸`,
+        summary: `Изменено — ${txLabel(next)} (${changes.join(", ") || "без изменений"})`,
       });
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SALES_KEY });
-    },
+    onSuccess: () => invalidateCashAndSales(qc),
   });
 }
 
@@ -360,16 +400,14 @@ export function useDeleteFxSale() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (old: FxSale) => {
-      const { error } = await supabase.from("fx_sales").delete().eq("id", old.id);
+      const { error } = await supabase.from("cash_transactions").delete().eq("id", old.id);
       if (error) throw error;
       await insertHistory({
         action: "delete",
         kind: "sell",
-        summary: `FX продажа удалена: ${saleLabel(old)}`,
+        summary: `Удалено — ${txLabel(saleToTransaction(old))}`,
       });
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: SALES_KEY });
-    },
+    onSuccess: () => invalidateCashAndSales(qc),
   });
 }

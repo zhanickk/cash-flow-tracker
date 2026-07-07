@@ -109,6 +109,7 @@ export function useAddCashTransaction() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
+      qc.invalidateQueries({ queryKey: ["fx-sales"] });
     },
   });
 }
@@ -158,6 +159,7 @@ export function useUpdateCashTransaction() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
+      qc.invalidateQueries({ queryKey: ["fx-sales"] });
     },
   });
 }
@@ -183,6 +185,7 @@ export function useDeleteCashTransaction() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
+      qc.invalidateQueries({ queryKey: ["fx-sales"] });
     },
   });
 }
@@ -201,6 +204,7 @@ export function useResetCashRegister() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
+      qc.invalidateQueries({ queryKey: ["fx-sales"] });
     },
   });
 }
@@ -234,6 +238,7 @@ export function useNewDayCashRegister() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
+      qc.invalidateQueries({ queryKey: ["fx-sales"] });
     },
   });
 }
