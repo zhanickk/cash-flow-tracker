@@ -9,9 +9,35 @@ import {
 } from "@/lib/contacts";
 import {
   balanceTone,
+  currencyLabel,
   fmtContactBalance,
   type ContactCurrency,
 } from "@/lib/contact-currencies";
+
+function balanceGridClass(count: number) {
+  if (count <= 1) return "grid-cols-1";
+  if (count === 2) return "grid-cols-2";
+  if (count === 3) return "grid-cols-3";
+  if (count === 4) return "grid-cols-2";
+  return "grid-cols-3";
+}
+
+function balanceCardWidth(count: number) {
+  if (count <= 2) return "w-80";
+  if (count === 3) return "w-[26rem]";
+  return "w-[28rem]";
+}
+
+function balanceAmountClass(count: number) {
+  if (count >= 3) return "text-sm font-semibold leading-snug";
+  return "text-lg font-semibold leading-tight";
+}
+
+function formatBalance(code: ContactCurrency, value: number) {
+  if (code === "KZT") return fmtAmount(value) + " ₸";
+  if (code === "USD") return fmtUsd(value);
+  return fmtContactBalance(code, value);
+}
 
 export function ContactBalanceHoverCard({
   contactId,
@@ -51,7 +77,7 @@ export function ContactBalanceHoverCard({
       .map(([k]) => k) as ContactCurrency[]);
 
   return (
-    <HoverCardContent className="w-96 p-4">
+    <HoverCardContent className={cn("p-4", balanceCardWidth(open.length))}>
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <div className="truncate text-base font-semibold leading-none">{name}</div>
         {(txCount !== undefined || lastActivityAt) && (
@@ -67,28 +93,27 @@ export function ContactBalanceHoverCard({
           Нет открытых счетов
         </div>
       ) : (
-        <div
-          className={cn(
-            "mb-3 grid gap-2",
-            open.length === 1 ? "grid-cols-1" : open.length === 2 ? "grid-cols-2" : "grid-cols-2",
-          )}
-        >
+        <div className={cn("mb-3 grid gap-2", balanceGridClass(open.length))}>
           {open.map((code) => {
             const value = resolvedBalances[code] ?? 0;
+            const formatted = formatBalance(code, value);
             return (
-              <div key={code} className="rounded-lg bg-muted p-3">
-                <div className="mb-1 text-xs text-muted-foreground">{code}</div>
+              <div
+                key={code}
+                className="flex min-h-[4.25rem] min-w-0 flex-col justify-center rounded-lg bg-muted px-2.5 py-2"
+              >
+                <div className="mb-1 truncate text-[11px] font-medium text-muted-foreground">
+                  {currencyLabel(code)}
+                </div>
                 <div
                   className={cn(
-                    "text-lg font-semibold leading-tight tabular-nums",
+                    "truncate tabular-nums",
+                    balanceAmountClass(open.length),
                     balanceTone(value),
                   )}
+                  title={formatted}
                 >
-                  {code === "KZT"
-                    ? fmtAmount(value) + " ₸"
-                    : code === "USD"
-                      ? fmtUsd(value)
-                      : fmtContactBalance(code, value)}
+                  {formatted}
                 </div>
               </div>
             );
