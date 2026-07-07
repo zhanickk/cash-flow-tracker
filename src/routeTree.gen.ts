@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as JournalRouteImport } from './routes/journal'
+import { Route as FxSalesRouteImport } from './routes/fx-sales'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ContactsIndexRouteImport } from './routes/contacts.index'
 import { Route as ContactsContactIdRouteImport } from './routes/contacts.$contactId'
@@ -23,6 +24,11 @@ const LoginRoute = LoginRouteImport.update({
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FxSalesRoute = FxSalesRouteImport.update({
+  id: '/fx-sales',
+  path: '/fx-sales',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -43,6 +49,7 @@ const ContactsContactIdRoute = ContactsContactIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/fx-sales': typeof FxSalesRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -50,6 +57,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/fx-sales': typeof FxSalesRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -58,6 +66,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/fx-sales': typeof FxSalesRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -65,12 +74,25 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/journal' | '/login' | '/contacts/$contactId' | '/contacts/'
+  fullPaths:
+    | '/'
+    | '/fx-sales'
+    | '/journal'
+    | '/login'
+    | '/contacts/$contactId'
+    | '/contacts/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/journal' | '/login' | '/contacts/$contactId' | '/contacts'
+  to:
+    | '/'
+    | '/fx-sales'
+    | '/journal'
+    | '/login'
+    | '/contacts/$contactId'
+    | '/contacts'
   id:
     | '__root__'
     | '/'
+    | '/fx-sales'
     | '/journal'
     | '/login'
     | '/contacts/$contactId'
@@ -79,6 +101,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  FxSalesRoute: typeof FxSalesRoute
   JournalRoute: typeof JournalRoute
   LoginRoute: typeof LoginRoute
   ContactsContactIdRoute: typeof ContactsContactIdRoute
@@ -99,6 +122,13 @@ declare module '@tanstack/react-router' {
       path: '/journal'
       fullPath: '/journal'
       preLoaderRoute: typeof JournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fx-sales': {
+      id: '/fx-sales'
+      path: '/fx-sales'
+      fullPath: '/fx-sales'
+      preLoaderRoute: typeof FxSalesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -127,6 +157,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  FxSalesRoute: FxSalesRoute,
   JournalRoute: JournalRoute,
   LoginRoute: LoginRoute,
   ContactsContactIdRoute: ContactsContactIdRoute,

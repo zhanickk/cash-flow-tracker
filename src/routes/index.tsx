@@ -694,6 +694,12 @@ function Index() {
               Контакты (полная база)
             </Link>
           </Button>
+          <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
+            <Link to="/fx-sales">
+              <Banknote className="h-4 w-4" />
+              Продажа валют (учёт и отчёты)
+            </Link>
+          </Button>
         </div>
         <div className="lg:col-span-2">
           <Button

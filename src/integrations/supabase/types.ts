@@ -261,6 +261,80 @@ export type Database = {
         }
         Relationships: []
       }
+      fx_currencies: {
+        Row: {
+          code: string
+          created_at: string
+          is_active: boolean
+          label: string
+          sort_order: number
+          symbol: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          is_active?: boolean
+          label: string
+          sort_order?: number
+          symbol?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          is_active?: boolean
+          label?: string
+          sort_order?: number
+          symbol?: string | null
+        }
+        Relationships: []
+      }
+      fx_sales: {
+        Row: {
+          cashier_name: string | null
+          created_at: string
+          currency_code: string
+          foreign_amount: number
+          id: string
+          kzt_amount: number
+          note: string | null
+          occurred_at: string
+          rate: number
+          updated_at: string
+        }
+        Insert: {
+          cashier_name?: string | null
+          created_at?: string
+          currency_code: string
+          foreign_amount: number
+          id?: string
+          kzt_amount: number
+          note?: string | null
+          occurred_at?: string
+          rate: number
+          updated_at?: string
+        }
+        Update: {
+          cashier_name?: string | null
+          created_at?: string
+          currency_code?: string
+          foreign_amount?: number
+          id?: string
+          kzt_amount?: number
+          note?: string | null
+          occurred_at?: string
+          rate?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fx_sales_currency_code_fkey"
+            columns: ["currency_code"]
+            isOneToOne: false
+            referencedRelation: "fx_currencies"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
