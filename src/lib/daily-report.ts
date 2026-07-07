@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { peopleMoneySpendFromReportTxs } from "@/lib/fx-people-money-spend";
 
 export type Currency = "USD" | "EUR" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
 export type TxKind = "opening" | "buy" | "sell" | "income" | "expense";
@@ -62,6 +63,14 @@ export interface DailyReportData {
     outKzt: number;
     netKzt: number;
   }[];
+  /** USD: трата Жұрттың ақшасы за день (продажа − покупка) */
+  peopleMoneySpendUsd: {
+    boughtUsd: number;
+    soldUsd: number;
+    excessUsd: number;
+    avgSellRate: number;
+    spendKzt: number;
+  };
   buyRows: ReportTransaction[];
   sellRows: ReportTransaction[];
   personRows: ReportTransaction[];
@@ -236,6 +245,15 @@ export function buildDailyReport(
     (a, b) => Math.abs(b.netKzt) - Math.abs(a.netKzt),
   );
 
+  const peopleMoneyDay = peopleMoneySpendFromReportTxs(transactions);
+  const peopleMoneySpendUsd = {
+    boughtUsd: peopleMoneyDay.boughtUsd,
+    soldUsd: peopleMoneyDay.soldUsd,
+    excessUsd: peopleMoneyDay.excessUsd,
+    avgSellRate: peopleMoneyDay.avgSellRate,
+    spendKzt: peopleMoneyDay.spendKzt,
+  };
+
   const rows = [...transactions]
     .sort((a, b) => a.ts - b.ts)
     .map((tx) => ({
@@ -278,6 +296,7 @@ export function buildDailyReport(
     personExpenseKzt,
     netProfitKzt,
     peopleBalance,
+    peopleMoneySpendUsd,
     buyRows,
     sellRows,
     personRows,
@@ -362,6 +381,16 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
   };
 
   addSummaryRow("Маржа обмена (KZT)", data.totalFxMarginKzt, "good");
+  const usdFx = data.fxRows.find((x) => x.currency === "USD");
+  if (usdFx && (usdFx.boughtAmount > 0 || usdFx.soldAmount > 0)) {
+    addSummaryRow(
+      "Трата Жұрттың ақшасы (USD, KZT)",
+      data.peopleMoneySpendUsd.excessUsd > 0
+        ? `${fmt(data.peopleMoneySpendUsd.excessUsd)} $ × ${fmt(data.peopleMoneySpendUsd.avgSellRate, 4)} = ${fmt(data.peopleMoneySpendUsd.spendKzt)} ₸`
+        : "0 (покупка ≥ продажа)",
+      data.peopleMoneySpendUsd.excessUsd > 0 ? "bad" : undefined,
+    );
+  }
   addSummaryRow("Приход без привязки к контакту KZT", data.regularIncomeKzt, "good");
   addSummaryRow("Обычные расходы KZT", data.regularExpenseKzt, "bad");
   addSummaryRow(

@@ -11,6 +11,11 @@ import {
   type ContactTx,
 } from "@/lib/fx-pots";
 import { cashRowsToSales } from "@/lib/fx-sales";
+import {
+  cashRowsToUsdFxOps,
+  computePeopleMoneySpend,
+  type PeopleMoneySpendReport,
+} from "@/lib/fx-people-money-spend";
 
 export interface CurrencyHoldingCard {
   currencyCode: string;
@@ -164,21 +169,37 @@ export function heldInKztSummary(
 export function useCurrencyHoldings() {
   return useQuery({
     queryKey: HOLDINGS_KEY,
-    queryFn: async () => {
+    queryFn: async (): Promise<{
+      cards: CurrencyHoldingCard[];
+      allSales: FxSale[];
+      contactTxs: ContactTx[];
+      currencies: Tables<"fx_currencies">[];
+      usdReplay: ReturnType<typeof replayUsdSales>;
+      peopleMoneySpend: PeopleMoneySpendReport;
+    }> => {
       const [
         { data: currencies, error: cErr },
         { data: contactTxs, error: ctErr },
-        { data: cashRows, error: tErr },
+        { data: sellRows, error: tErr },
+        { data: usdFxRows, error: uErr },
       ] = await Promise.all([
         supabase.from("fx_currencies").select("*").eq("is_active", true).order("sort_order"),
         supabase.from("contact_transactions").select("*"),
         supabase.from("cash_transactions").select("*").eq("kind", "sell").order("ts", { ascending: false }),
+        supabase
+          .from("cash_transactions")
+          .select("*")
+          .eq("currency", "USD")
+          .in("kind", ["buy", "sell"])
+          .order("ts", { ascending: false }),
       ]);
       if (cErr) throw cErr;
       if (ctErr) throw ctErr;
       if (tErr) throw tErr;
+      if (uErr) throw uErr;
 
-      const sales = cashRowsToSales(cashRows ?? []);
+      const sales = cashRowsToSales(sellRows ?? []);
+      const peopleMoneySpend = computePeopleMoneySpend(cashRowsToUsdFxOps(usdFxRows ?? []));
 
       return {
         cards: buildHoldingCards(currencies ?? [], (contactTxs ?? []) as ContactTx[], sales),
@@ -186,6 +207,7 @@ export function useCurrencyHoldings() {
         contactTxs: (contactTxs ?? []) as ContactTx[],
         currencies: currencies ?? [],
         usdReplay: replayUsdSales((contactTxs ?? []) as ContactTx[], sales),
+        peopleMoneySpend,
       };
     },
   });
