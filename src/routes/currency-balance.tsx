@@ -2,35 +2,24 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Fragment, useState } from "react";
 import {
   ArrowLeft,
-  ArrowLeftRight,
+  Banknote,
   ChevronDown,
   ChevronUp,
   Users,
-  Wallet,
-  Banknote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { fmt, formatAmountInput, parseAmountInput } from "@/lib/cash-shared";
-import { balanceTone, useCurrencyHoldings } from "@/lib/currency-balance";
+import { fmt } from "@/lib/cash-shared";
+import { useCurrencyHoldings } from "@/lib/currency-balance";
 import type { PeopleMoneySpendDay } from "@/lib/fx-people-money-spend";
-import { toDateTimeLocalInput, useAddFxSale } from "@/lib/fx-sales";
 
 export const Route = createFileRoute("/currency-balance")({
   head: () => ({
-    meta: [{ title: "Баланс валют — Кассовый лист" }],
+    meta: [{ title: "Трата Жұрттың ақшасы — Кассовый лист" }],
   }),
   component: CurrencyBalancePage,
 });
-
-function parseRate(s: string): number {
-  if (!s) return 0;
-  const cleaned = s.replace(/\s/g, "").replace(/,/g, ".");
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : n;
-}
 
 function PeopleMoneyDayDetail({ day }: { day: PeopleMoneySpendDay }) {
   const hasTx = day.buys.length > 0 || day.sells.length > 0;
@@ -81,98 +70,161 @@ function PeopleMoneyDayDetail({ day }: { day: PeopleMoneySpendDay }) {
   );
 }
 
+function MetricTile({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  accent?: "warning" | "muted" | "default";
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div
+        className={cn(
+          "mt-2 text-2xl font-bold tabular-nums sm:text-3xl",
+          accent === "warning" && "text-warning",
+          accent === "muted" && "text-muted-foreground",
+        )}
+      >
+        {value}
+      </div>
+      {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
 function PeopleMoneySpendSection({
   today,
   daysWithSpend,
   totalSpendKzt,
+  totalExcessUsd,
 }: {
   today: PeopleMoneySpendDay;
   daysWithSpend: PeopleMoneySpendDay[];
   totalSpendKzt: number;
+  totalExcessUsd: number;
 }) {
   const [expandedDay, setExpandedDay] = useState<string | null>(today.dateKey);
-  const [historyOpen, setHistoryOpen] = useState(daysWithSpend.length > 0);
+  const [historyOpen, setHistoryOpen] = useState(true);
+
+  const todayHasSpend = today.excessUsd > 0;
 
   return (
-    <Card className="border-warning/30">
-      <CardHeader className="py-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Banknote className="h-4 w-4 text-warning" />
-          Трата Жұрттың ақшасы
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">
-          Если за день продали USD больше, чем купили — превышение из резерва клиентов (Салынған),
-          зафиксировано по среднему курсу продаж. Данные из кассы (Supabase).
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="rounded-lg border border-border bg-muted/40 p-3">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <MetricTile
+          label="Сегодня в тенге"
+          value={todayHasSpend ? `${fmt(today.spendKzt)} ₸` : "0 ₸"}
+          sub={
+            todayHasSpend
+              ? `${fmt(today.excessUsd)} $ × ${fmt(today.avgSellRate, 4)}`
+              : "Покупка USD за день ≥ продажи"
+          }
+          accent={todayHasSpend ? "warning" : "muted"}
+        />
+        <MetricTile
+          label="Всего зафиксировано"
+          value={`${fmt(totalSpendKzt)} ₸`}
+          sub={`${fmt(totalExcessUsd)} $ из резерва клиентов`}
+          accent={totalSpendKzt > 0 ? "warning" : "muted"}
+        />
+      </div>
+
+      <Card className="border-2 border-warning/40 shadow-md">
+        <CardHeader className="border-b border-border/60 bg-warning-soft/30 pb-4">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Banknote className="h-5 w-5 text-warning" />
             Сегодня
-          </div>
-          <div className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
-            <div>
-              <div className="text-[11px] text-muted-foreground">Куплено</div>
-              <div className="font-semibold tabular-nums">{fmt(today.boughtUsd)} $</div>
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Если за день продали USD больше, чем купили — превышение считается тратой из резерва
+            (Салынған), по среднему курсу продаж. Данные из кассы.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg bg-muted/50 p-3">
+              <div className="text-xs text-muted-foreground">Куплено USD</div>
+              <div className="mt-1 text-xl font-bold tabular-nums">{fmt(today.boughtUsd)} $</div>
             </div>
-            <div>
-              <div className="text-[11px] text-muted-foreground">Продано</div>
-              <div className="font-semibold tabular-nums">{fmt(today.soldUsd)} $</div>
+            <div className="rounded-lg bg-muted/50 p-3">
+              <div className="text-xs text-muted-foreground">Продано USD</div>
+              <div className="mt-1 text-xl font-bold tabular-nums">{fmt(today.soldUsd)} $</div>
             </div>
-            <div>
-              <div className="text-[11px] text-muted-foreground">Из резерва</div>
+            <div
+              className={cn(
+                "rounded-lg p-3",
+                todayHasSpend ? "bg-warning-soft" : "bg-muted/50",
+              )}
+            >
+              <div className="text-xs text-muted-foreground">Из резерва (трата)</div>
               <div
                 className={cn(
-                  "font-bold tabular-nums",
-                  today.excessUsd > 0 ? "text-warning" : "text-muted-foreground",
+                  "mt-1 text-xl font-bold tabular-nums",
+                  todayHasSpend ? "text-warning" : "text-muted-foreground",
                 )}
               >
                 {fmt(today.excessUsd)} $
               </div>
             </div>
           </div>
-          {today.excessUsd > 0 ? (
-            <div className="mt-3 rounded-md bg-warning-soft px-3 py-2 text-sm">
-              <span className="text-muted-foreground">Зафиксировано: </span>
-              <span className="font-semibold tabular-nums">
-                {fmt(today.excessUsd)} $ × {fmt(today.avgSellRate, 4)} ={" "}
-                <span className="text-warning">{fmt(today.spendKzt)} ₸</span>
-              </span>
+
+          {todayHasSpend && (
+            <div className="rounded-xl border border-warning/30 bg-warning-soft/50 px-4 py-3 text-center">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Зафиксировано в тенге
+              </div>
+              <div className="mt-1 text-3xl font-bold tabular-nums text-warning sm:text-4xl">
+                {fmt(today.spendKzt)} ₸
+              </div>
+              <div className="mt-1 text-sm tabular-nums text-muted-foreground">
+                {fmt(today.excessUsd)} $ × {fmt(today.avgSellRate, 4)}
+              </div>
             </div>
-          ) : (
-            <p className="mt-2 text-xs text-muted-foreground">
-              0 — покупка USD за день не меньше продажи (или операций не было).
-            </p>
           )}
+
           {(today.buys.length > 0 || today.sells.length > 0) && (
-            <div className="mt-3 border-t border-border/60 pt-3">
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+              <div className="mb-2 text-xs font-medium text-muted-foreground">Операции за сегодня</div>
               <PeopleMoneyDayDetail day={today} />
             </div>
           )}
-        </div>
+        </CardContent>
+      </Card>
 
-        {daysWithSpend.length > 0 && (
-          <div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mb-2 h-8 w-full gap-1 text-xs"
-              onClick={() => setHistoryOpen((v) => !v)}
-            >
-              История трат по дням ({daysWithSpend.length})
-              {historyOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </Button>
-            {historyOpen && (
-              <div className="overflow-x-auto rounded-md border border-border">
-                <table className="w-full min-w-[520px] text-xs">
-                  <thead className="bg-muted/60 text-muted-foreground">
+      {daysWithSpend.length > 0 && (
+        <Card>
+          <CardHeader className="py-3">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base">История по дням</CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1 text-xs"
+                onClick={() => setHistoryOpen((v) => !v)}
+              >
+                {daysWithSpend.length} {daysWithSpend.length === 1 ? "день" : "дней"}
+                {historyOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </Button>
+            </div>
+          </CardHeader>
+          {historyOpen && (
+            <CardContent className="p-0 pt-0">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead className="bg-muted/60 text-xs text-muted-foreground">
                     <tr>
-                      <th className="px-2 py-2 text-left font-medium">Дата</th>
-                      <th className="px-2 py-2 text-right font-medium">Куплено</th>
-                      <th className="px-2 py-2 text-right font-medium">Продано</th>
-                      <th className="px-2 py-2 text-right font-medium">Из резерва</th>
-                      <th className="px-2 py-2 text-right font-medium">Ср. курс</th>
-                      <th className="px-2 py-2 text-right font-medium">В тенге</th>
+                      <th className="px-3 py-2.5 text-left font-medium">Дата</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Куплено</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Продано</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Из резерва</th>
+                      <th className="px-3 py-2.5 text-right font-medium">Ср. курс</th>
+                      <th className="px-3 py-2.5 text-right font-medium">В тенге</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -184,20 +236,20 @@ function PeopleMoneySpendSection({
                             setExpandedDay((v) => (v === day.dateKey ? null : day.dateKey))
                           }
                         >
-                          <td className="px-2 py-2">{day.dateLabel}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{fmt(day.boughtUsd)} $</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{fmt(day.soldUsd)} $</td>
-                          <td className="px-2 py-2 text-right tabular-nums font-medium text-warning">
+                          <td className="px-3 py-2.5 font-medium">{day.dateLabel}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{fmt(day.boughtUsd)} $</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">{fmt(day.soldUsd)} $</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-warning">
                             {fmt(day.excessUsd)} $
                           </td>
-                          <td className="px-2 py-2 text-right tabular-nums">{fmt(day.avgSellRate, 4)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums font-semibold">
+                          <td className="px-3 py-2.5 text-right tabular-nums">{fmt(day.avgSellRate, 4)}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums font-bold">
                             {fmt(day.spendKzt)} ₸
                           </td>
                         </tr>
                         {expandedDay === day.dateKey && (
                           <tr>
-                            <td colSpan={6} className="bg-muted/20 px-3 py-3">
+                            <td colSpan={6} className="bg-muted/20 px-4 py-3">
                               <PeopleMoneyDayDetail day={day} />
                             </td>
                           </tr>
@@ -206,64 +258,27 @@ function PeopleMoneySpendSection({
                     ))}
                   </tbody>
                 </table>
-                <div className="border-t border-border bg-muted/30 px-3 py-2 text-right text-xs">
-                  <span className="text-muted-foreground">Итого зафиксировано: </span>
-                  <span className="font-semibold tabular-nums">{fmt(totalSpendKzt)} ₸</span>
-                </div>
               </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+              <div className="border-t border-border bg-muted/30 px-4 py-3 text-right">
+                <span className="text-sm text-muted-foreground">Итого зафиксировано: </span>
+                <span className="text-lg font-bold tabular-nums text-warning">{fmt(totalSpendKzt)} ₸</span>
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
+    </div>
   );
 }
 
 function CurrencyBalancePage() {
   const { data, isLoading } = useCurrencyHoldings();
-  const addSale = useAddFxSale();
-
-  const [expanded, setExpanded] = useState(false);
-  const [saleWarning, setSaleWarning] = useState<string | null>(null);
-
-  const [saleAmount, setSaleAmount] = useState("");
-  const [saleRate, setSaleRate] = useState("");
-  const [saleNote, setSaleNote] = useState("");
-  const [saleAt, setSaleAt] = useState(toDateTimeLocalInput(Date.now()));
-
-  const usdCard = data?.cards.find((c) => c.currencyCode === "USD");
-  const totalSalynghanKzt = usdCard?.salynghanKztTotal ?? 0;
   const peopleMoney = data?.peopleMoneySpend;
-
-  const previewKzt = parseAmountInput(saleAmount) * parseRate(saleRate);
-
-  function submitSale() {
-    const a = parseAmountInput(saleAmount);
-    const r = parseRate(saleRate);
-    if (a <= 0 || r <= 0) return;
-    addSale.mutate(
-      {
-        occurredAt: new Date(saleAt).toISOString(),
-        currencyCode: "USD",
-        foreignAmount: a,
-        rate: r,
-        note: saleNote.trim() || undefined,
-      },
-      {
-        onSuccess: (res) => {
-          setSaleAmount("");
-          setSaleRate("");
-          setSaleNote("");
-          setSaleWarning(res?.warning ?? null);
-        },
-      },
-    );
-  }
 
   return (
     <div className="min-h-screen bg-background pb-16">
       <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
-        <div className="mx-auto max-w-6xl px-3 py-3">
+        <div className="mx-auto max-w-4xl px-3 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="icon" asChild>
@@ -271,11 +286,11 @@ function CurrencyBalancePage() {
                   <ArrowLeft className="h-5 w-5" />
                 </Link>
               </Button>
-              <Wallet className="h-5 w-5 text-primary" />
+              <Banknote className="h-5 w-5 text-warning" />
               <div>
-                <h1 className="text-lg font-semibold">Баланс USD</h1>
+                <h1 className="text-lg font-semibold">Трата Жұрттың ақшасы</h1>
                 <p className="text-xs text-muted-foreground">
-                  Қарыз / Салынған · только долларовый счёт
+                  USD: продажа сверх покупки за день → резерв клиентов в тенге
                 </p>
               </div>
             </div>
@@ -289,203 +304,24 @@ function CurrencyBalancePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-4 px-3 py-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm text-muted-foreground">
-                Держим в тенге (из Салынған, все продажи)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold tabular-nums text-success">
-                {fmt(totalSalynghanKzt)} ₸
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm text-muted-foreground">USD: остаток котла</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {data?.usdReplay ? (
-                <div className="space-y-1 text-sm">
-                  <div>
-                    Қарыз:{" "}
-                    <span className={cn("font-bold tabular-nums", balanceTone(data.usdReplay.karyzRemainder))}>
-                      {fmt(data.usdReplay.karyzRemainder)} $
-                    </span>
-                  </div>
-                  <div>
-                    Салынған:{" "}
-                    <span
-                      className={cn("font-bold tabular-nums", balanceTone(data.usdReplay.salynghanRemainder))}
-                    >
-                      {fmt(data.usdReplay.salynghanRemainder)} $
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <span className="text-muted-foreground">—</span>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {saleWarning && (
-          <div className="rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-sm text-warning">
-            {saleWarning}
-          </div>
+      <main className="mx-auto max-w-4xl space-y-4 px-3 py-4">
+        {isLoading && (
+          <p className="py-16 text-center text-sm text-muted-foreground">Загрузка…</p>
         )}
-
-        <Card>
-          <CardHeader className="py-3">
-            <CardTitle className="text-sm">Продажа USD (→ касса)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <Input
-                type="datetime-local"
-                value={saleAt}
-                onChange={(e) => setSaleAt(e.target.value)}
-              />
-              <Input
-                placeholder="Объём, $"
-                value={saleAmount}
-                onChange={(e) => setSaleAmount(formatAmountInput(e.target.value))}
-              />
-              <Input
-                placeholder="Курс"
-                value={saleRate}
-                onChange={(e) => setSaleRate(formatAmountInput(e.target.value))}
-              />
-              <Input
-                placeholder="Примечание"
-                value={saleNote}
-                onChange={(e) => setSaleNote(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {previewKzt > 0 && (
-                <span className="text-sm tabular-nums">
-                  = <strong>{fmt(previewKzt)} ₸</strong>
-                </span>
-              )}
-              <Button
-                className="gap-1 bg-success text-success-foreground hover:bg-success/90"
-                onClick={submitSale}
-                disabled={addSale.isPending}
-              >
-                <ArrowLeftRight className="h-4 w-4" />
-                Продать USD
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Сначала списание из Қарыз, превышение — из Салынған (общий котёл).
-            </p>
-          </CardContent>
-        </Card>
 
         {!isLoading && peopleMoney && (
           <PeopleMoneySpendSection
             today={peopleMoney.today}
             daysWithSpend={peopleMoney.daysWithSpend}
             totalSpendKzt={peopleMoney.totalSpendKzt}
+            totalExcessUsd={peopleMoney.totalExcessUsd}
           />
         )}
 
-        {isLoading && <p className="text-center text-sm text-muted-foreground">Загрузка…</p>}
-        {!isLoading && !usdCard && (
+        {!isLoading && !peopleMoney && (
           <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              Нет USD-операций. Импортируйте клиентов из Excel или добавьте операции в{" "}
-              <Link to="/contacts" className="text-primary underline">
-                карточках клиентов
-              </Link>
-              .
-            </CardContent>
-          </Card>
-        )}
-
-        {usdCard && (
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-base">USD — долларовый счёт</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-                <div className="rounded-md bg-muted/60 p-2">
-                  <div className="text-[11px] text-muted-foreground">Қарыз (нам должны)</div>
-                  <div className="font-semibold tabular-nums">{fmt(usdCard.totalKaryz)} $</div>
-                </div>
-                <div className="rounded-md bg-muted/60 p-2">
-                  <div className="text-[11px] text-muted-foreground">Салынған (мы должны)</div>
-                  <div className="font-semibold tabular-nums">{fmt(usdCard.totalSalynghan)} $</div>
-                </div>
-                <div className="rounded-md bg-muted/60 p-2">
-                  <div className="text-[11px] text-muted-foreground">Продано</div>
-                  <div className="font-semibold tabular-nums">{fmt(usdCard.soldForeign)} $</div>
-                </div>
-                <div className="rounded-md border border-border p-2">
-                  <div className="text-[11px] text-muted-foreground">Остаток Қарыз</div>
-                  <div className={cn("font-bold tabular-nums", balanceTone(usdCard.karyzRemainder))}>
-                    {fmt(usdCard.karyzRemainder)} $
-                  </div>
-                </div>
-                <div className="rounded-md border border-border p-2">
-                  <div className="text-[11px] text-muted-foreground">Остаток Салынған</div>
-                  <div
-                    className={cn("font-bold tabular-nums", balanceTone(usdCard.salynghanRemainder))}
-                  >
-                    {fmt(usdCard.salynghanRemainder)} $
-                  </div>
-                </div>
-              </div>
-              {usdCard.salynghanKztTotal > 0 && (
-                <div className="rounded-md bg-success-soft px-3 py-2 text-sm">
-                  <span className="text-muted-foreground">В тенге из Салынған: </span>
-                  <span className="font-semibold tabular-nums text-success">
-                    {fmt(usdCard.salynghanKztTotal)} ₸
-                  </span>
-                </div>
-              )}
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-full gap-1 text-xs"
-                onClick={() => setExpanded((v) => !v)}
-              >
-                История продаж ({usdCard.sales.length})
-                {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-              </Button>
-              {expanded && (
-                <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border p-2 text-xs">
-                  {usdCard.sales.length === 0 && (
-                    <li className="text-muted-foreground">Продаж пока нет</li>
-                  )}
-                  {usdCard.sales.map((s) => {
-                    const d = new Date(s.occurredAt);
-                    return (
-                      <li key={s.id} className="space-y-0.5 border-b border-border/40 pb-1">
-                        <div className="flex justify-between gap-2 tabular-nums">
-                          <span className="text-muted-foreground">
-                            {d.toLocaleDateString("ru-RU")}{" "}
-                            {d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                          <span>
-                            {fmt(s.foreignAmount)} $ × {fmt(s.rate, 4)} ={" "}
-                            <span className="font-medium text-success">{fmt(s.kztAmount)} ₸</span>
-                          </span>
-                        </div>
-                        {s.allocationLabel && (
-                          <div className="text-[10px] text-muted-foreground">{s.allocationLabel}</div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
+            <CardContent className="py-16 text-center text-sm text-muted-foreground">
+              Нет данных по USD-операциям в кассе.
             </CardContent>
           </Card>
         )}

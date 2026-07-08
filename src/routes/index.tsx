@@ -55,7 +55,6 @@ import {
   Link2,
   Link2Off,
   ExternalLink,
-  TrendingUp,
 } from "lucide-react";
 import {
   buildDailyReport,
@@ -704,13 +703,7 @@ function Index() {
           <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
             <Link to="/currency-balance">
               <Wallet className="h-4 w-4" />
-              Баланс валют (Қарыз / Салынған)
-            </Link>
-          </Button>
-          <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
-            <Link to="/fx-risk">
-              <TrendingUp className="h-4 w-4" />
-              Валютный риск
+              Трата Жұрттың ақшасы
             </Link>
           </Button>
         </div>
