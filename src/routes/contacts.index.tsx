@@ -15,24 +15,25 @@ import { ContactsExcelImportDialog } from "@/components/contacts-excel-import-di
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
+  Banknote,
   DollarSign,
   FileSpreadsheet,
   Plus,
   Search,
-  Users,
+  Wallet,
 } from "lucide-react";
 import {
   useContactsWithBalances,
   useCreateContact,
   type ContactWithBalance,
 } from "@/lib/contacts";
-import { balanceTone, fmtContactBalance } from "@/lib/contact-currencies";
+import { balanceTone, fmtContactBalance, type ContactCurrency } from "@/lib/contact-currencies";
 
 export const Route = createFileRoute("/contacts/")({
   head: () => ({
-    meta: [{ title: "Клиенты USD — Кассовый лист" }],
+    meta: [{ title: "Валютные счета — Кассовый лист" }],
   }),
-  component: ContactsPage,
+  component: CurrencyAccountsPage,
 });
 
 function initials(name: string) {
@@ -42,33 +43,49 @@ function initials(name: string) {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-function sortByUsdAmount(list: ContactWithBalance[], sign: "positive" | "negative") {
-  return [...list].sort((a, b) => {
-    const av = Math.abs(a.balances.USD ?? 0);
-    const bv = Math.abs(b.balances.USD ?? 0);
-    return bv - av;
-  }).filter((c) => {
-    const v = c.balances.USD ?? 0;
-    return sign === "positive" ? v > 0 : v < 0;
-  });
+function sortByCurrencyAmount(
+  list: ContactWithBalance[],
+  currency: ContactCurrency,
+  sign: "positive" | "negative",
+) {
+  return [...list]
+    .sort((a, b) => {
+      const av = Math.abs(a.balances[currency] ?? 0);
+      const bv = Math.abs(b.balances[currency] ?? 0);
+      return bv - av;
+    })
+    .filter((c) => {
+      const v = c.balances[currency] ?? 0;
+      return sign === "positive" ? v > 0 : v < 0;
+    });
 }
 
-function UsdContactSection({
+function CurrencyAccountSection({
   title,
   subtitle,
   contacts,
+  currency,
   tone,
+  icon: Icon,
 }: {
   title: string;
   subtitle: string;
   contacts: ContactWithBalance[];
-  tone: "salynghan" | "karyz";
+  currency: ContactCurrency;
+  tone: "salynghan" | "karyz" | "kzt_plus" | "kzt_minus";
+  icon: typeof DollarSign;
 }) {
+  const isUsd = currency === "USD";
+  const total = contacts.reduce((s, c) => s + Math.abs(c.balances[currency] ?? 0), 0);
+  const totalLabel = isUsd
+    ? `$${total.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+    : `${total.toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₸`;
+
   return (
     <div className="flex min-w-0 flex-1 flex-col rounded-lg border border-border bg-card">
       <div className="border-b border-border px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <DollarSign className="h-4 w-4 text-primary" />
+          <Icon className="h-4 w-4 text-primary" />
           <div>
             <div className="text-sm font-semibold">{title}</div>
             <div className="text-[11px] text-muted-foreground">{subtitle}</div>
@@ -76,21 +93,19 @@ function UsdContactSection({
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
           {contacts.length} ·{" "}
-          <span className="font-medium tabular-nums text-foreground">
-            $
-            {contacts
-              .reduce((s, c) => s + Math.abs(c.balances.USD ?? 0), 0)
-              .toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          </span>
+          <span className="font-medium tabular-nums text-foreground">{totalLabel}</span>
         </div>
       </div>
-      <div className="max-h-[calc(100vh-14rem)] divide-y divide-border overflow-y-auto">
+      <div className="max-h-[min(420px,50vh)] divide-y divide-border overflow-y-auto">
         {contacts.length === 0 && (
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">Нет записей</p>
         )}
         {contacts.map((c) => {
-          const value = c.balances.USD ?? 0;
-          const display = tone === "karyz" ? Math.abs(value) : value;
+          const value = c.balances[currency] ?? 0;
+          const display =
+            tone === "karyz" || tone === "kzt_minus" ? Math.abs(value) : Math.abs(value);
+          const signedForTone =
+            tone === "salynghan" || tone === "kzt_plus" ? display : -display;
           return (
             <HoverCard key={c.id} openDelay={150} closeDelay={80}>
               <HoverCardTrigger asChild>
@@ -113,10 +128,10 @@ function UsdContactSection({
                   <div
                     className={cn(
                       "shrink-0 text-sm font-semibold tabular-nums",
-                      balanceTone(tone === "salynghan" ? display : -display),
+                      balanceTone(signedForTone),
                     )}
                   >
-                    {fmtContactBalance("USD", tone === "karyz" ? -display : display)}
+                    {fmtContactBalance(currency, tone === "karyz" || tone === "kzt_minus" ? -display : display)}
                   </div>
                 </Link>
               </HoverCardTrigger>
@@ -136,7 +151,7 @@ function UsdContactSection({
   );
 }
 
-function ContactsPage() {
+function CurrencyAccountsPage() {
   const { data: contacts, isLoading } = useContactsWithBalances();
   const createContact = useCreateContact();
 
@@ -150,10 +165,16 @@ function ContactsPage() {
     return (contacts ?? []).filter((c) => c.name.toLowerCase().includes(q));
   }, [contacts, query]);
 
-  const salynghan = useMemo(() => sortByUsdAmount(searched, "positive"), [searched]);
-  const karyz = useMemo(() => sortByUsdAmount(searched, "negative"), [searched]);
+  const usdSalynghan = useMemo(() => sortByCurrencyAmount(searched, "USD", "positive"), [searched]);
+  const usdKaryz = useMemo(() => sortByCurrencyAmount(searched, "USD", "negative"), [searched]);
+  const kztPlus = useMemo(() => sortByCurrencyAmount(searched, "KZT", "positive"), [searched]);
+  const kztMinus = useMemo(() => sortByCurrencyAmount(searched, "KZT", "negative"), [searched]);
 
-  const hasResults = salynghan.length > 0 || karyz.length > 0;
+  const hasResults =
+    usdSalynghan.length > 0 ||
+    usdKaryz.length > 0 ||
+    kztPlus.length > 0 ||
+    kztMinus.length > 0;
 
   return (
     <div className="min-h-screen bg-background pb-16">
@@ -162,10 +183,12 @@ function ContactsPage() {
           <Link to="/" className="text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-5 w-5" />
           </Link>
-          <Users className="h-5 w-5 text-primary" />
+          <Wallet className="h-5 w-5 text-primary" />
           <div>
-            <div className="text-lg font-semibold">Клиенты (USD)</div>
-            <div className="text-xs text-muted-foreground">Салынған и Қарыз по долларовому счёту</div>
+            <div className="text-lg font-semibold">Валютные счета</div>
+            <div className="text-xs text-muted-foreground">
+              Долларовый и тенговый счета · данные из Excel и операций
+            </div>
           </div>
         </div>
         <div className="mx-auto flex max-w-7xl flex-col gap-2 px-3 pb-3 sm:flex-row">
@@ -191,33 +214,70 @@ function ContactsPage() {
             onClick={() => setExcelImportOpen(true)}
           >
             <FileSpreadsheet className="h-4 w-4" />
-            Импорт USD из Excel
+            Импорт из Excel (USD + KZT)
           </Button>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl px-3 py-3">
+      <main className="mx-auto w-full max-w-7xl space-y-6 px-3 py-3">
         {isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Загрузка…</p>}
         {!isLoading && !hasResults && (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            Нет клиентов с USD-балансом. Импортируйте из Excel.
+            Нет счетов. Импортируйте из Excel или добавьте операции в карточке клиента.
           </p>
         )}
         {!isLoading && hasResults && (
-          <div className="grid gap-4 lg:grid-cols-2">
-            <UsdContactSection
-              title="Салынған"
-              subtitle="Мы должны клиентам ($)"
-              contacts={salynghan}
-              tone="salynghan"
-            />
-            <UsdContactSection
-              title="Қарыз"
-              subtitle="Клиенты должны нам ($)"
-              contacts={karyz}
-              tone="karyz"
-            />
-          </div>
+          <>
+            <section className="space-y-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <DollarSign className="h-4 w-4" />
+                Долларовый счёт
+              </h2>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <CurrencyAccountSection
+                  title="Салынған"
+                  subtitle="Мы должны клиентам ($)"
+                  contacts={usdSalynghan}
+                  currency="USD"
+                  tone="salynghan"
+                  icon={DollarSign}
+                />
+                <CurrencyAccountSection
+                  title="Қарыз"
+                  subtitle="Клиенты должны нам ($)"
+                  contacts={usdKaryz}
+                  currency="USD"
+                  tone="karyz"
+                  icon={DollarSign}
+                />
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <Banknote className="h-4 w-4" />
+                Тенговый счёт
+              </h2>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <CurrencyAccountSection
+                  title="Тенге плюс"
+                  subtitle="Вложили нам деньги (₸)"
+                  contacts={kztPlus}
+                  currency="KZT"
+                  tone="kzt_plus"
+                  icon={Banknote}
+                />
+                <CurrencyAccountSection
+                  title="Тенге минус"
+                  subtitle="Должны нам (₸)"
+                  contacts={kztMinus}
+                  currency="KZT"
+                  tone="kzt_minus"
+                  icon={Banknote}
+                />
+              </div>
+            </section>
+          </>
         )}
       </main>
 

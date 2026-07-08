@@ -139,6 +139,53 @@ export type Database = {
         }
         Relationships: []
       }
+      contact_audit_log: {
+        Row: {
+          action: string
+          amount: number | null
+          contact_id: string | null
+          contact_name: string
+          created_at: string
+          currency: string | null
+          id: string
+          occurred_at: string
+          source: string | null
+          summary: string
+        }
+        Insert: {
+          action: string
+          amount?: number | null
+          contact_id?: string | null
+          contact_name: string
+          created_at?: string
+          currency?: string | null
+          id?: string
+          occurred_at?: string
+          source?: string | null
+          summary: string
+        }
+        Update: {
+          action?: string
+          amount?: number | null
+          contact_id?: string | null
+          contact_name?: string
+          created_at?: string
+          currency?: string | null
+          id?: string
+          occurred_at?: string
+          source?: string | null
+          summary?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_audit_log_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_conversions: {
         Row: {
           contact_id: string

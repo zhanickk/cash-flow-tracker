@@ -21,9 +21,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import {
+  mergeKztTargets,
   mergeUsdTargets,
   nameKey,
-  parseUsdContactsExcel,
+  parseContactsExcel,
   type ParsedBalanceRow,
 } from "@/lib/contacts-excel-import";
 import { useImportContactBalancesFromExcel, type ContactWithBalance } from "@/lib/contacts";
@@ -33,6 +34,12 @@ interface PreviewRow extends ParsedBalanceRow {
   matchedContactId: string | null;
   matchedContactName: string | null;
   isNew: boolean;
+}
+
+function groupLabel(row: ParsedBalanceRow): string {
+  if (row.group === "тенге плюс") return "Тенге плюс";
+  if (row.group === "тенге минус") return "Тенге минус";
+  return row.amount > 0 ? "Салынған" : "Қарыз";
 }
 
 export function ContactsExcelImportDialog({
@@ -49,6 +56,7 @@ export function ContactsExcelImportDialog({
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [resultMsg, setResultMsg] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const importMutation = useImportContactBalancesFromExcel();
 
@@ -65,10 +73,10 @@ export function ContactsExcelImportDialog({
     setResultMsg(null);
     try {
       const buffer = await file.arrayBuffer();
-      const result = await parseUsdContactsExcel(buffer);
-      const merged = mergeUsdTargets(result.rows);
+      const result = await parseContactsExcel(buffer);
+      const merged = [...mergeUsdTargets(result.rows), ...mergeKztTargets(result.rows)];
       if (merged.length === 0) {
-        throw new Error("На последнем листе не найдены USD-колонки САЛЫНГАН / КАРЫЗ");
+        throw new Error("На последнем листе не найдены колонки плюс/минус/САЛЫНГАН/КАРЫЗ");
       }
       const byKey = new Map(contacts.map((c) => [nameKey(c.name), c]));
       const preview: PreviewRow[] = merged.map((r) => {
@@ -92,9 +100,8 @@ export function ContactsExcelImportDialog({
   const namesOnSheet = new Set((rows ?? []).map((r) => nameKey(r.normalizedName)));
   const removedContacts = contacts.filter((c) => !namesOnSheet.has(nameKey(c.name)));
   const newRows = (rows ?? []).filter((r) => r.isNew);
-  const existingRows = (rows ?? []).filter((r) => !r.isNew);
-  const salynghanRows = (rows ?? []).filter((r) => r.amount > 0);
-  const karyzRows = (rows ?? []).filter((r) => r.amount < 0);
+  const usdRows = (rows ?? []).filter((r) => r.currency === "USD");
+  const kztRows = (rows ?? []).filter((r) => r.currency === "KZT");
 
   function handleConfirmImport() {
     if (!rows) return;
@@ -105,7 +112,7 @@ export function ContactsExcelImportDialog({
         targets: rows.map((r) => ({
           rawName: r.rawName,
           normalizedName: r.normalizedName,
-          currency: "USD",
+          currency: r.currency,
           targetBalance: r.amount,
         })),
       },
@@ -113,15 +120,13 @@ export function ContactsExcelImportDialog({
         onSuccess: (data) => {
           setConfirmOpen(false);
           setResultMsg(
-            `Готово: ${data.reconciled} корректировок USD, создано ${data.created}, удалено ${data.removed} контактов.`,
+            `Готово: ${data.reconciled} корректировок, создано ${data.created}, удалено ${data.removed} контактов.`,
           );
           setRows(null);
         },
       },
     );
   }
-
-  const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
     <>
@@ -136,12 +141,11 @@ export function ContactsExcelImportDialog({
           <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-primary" />
-              Импорт USD из Excel
+              Импорт из Excel
             </DialogTitle>
             <DialogDescription>
-              Берём последний лист: колонки САЛЫНГАН (мы должны, $) и КАРЫЗ (нам должны, $).
-              Балансы приводятся к значениям из таблицы. Контакты, которых нет в этих колонках,
-              будут удалены.
+              Последний лист: тенге плюс/минус и USD САЛЫНГАН/КАРЫЗ. Балансы приводятся к Excel.
+              Контакты, которых нет в файле, будут удалены.
             </DialogDescription>
           </DialogHeader>
 
@@ -189,11 +193,11 @@ export function ContactsExcelImportDialog({
                     Лист: <span className="font-medium text-foreground">{sheetName}</span>
                   </span>
                   <span>
-                    USD: {rows.length} · Салынған: {salynghanRows.length} · Қарыз: {karyzRows.length}
+                    USD: {usdRows.length} · KZT: {kztRows.length} · Всего: {rows.length}
                   </span>
                   <span>
                     Новые: <span className="font-medium text-primary">{newRows.length}</span> ·
-                    Существ.: {existingRows.length} · Удалить:{" "}
+                    Удалить:{" "}
                     <span className="font-medium text-danger">{removedContacts.length}</span>
                   </span>
                 </div>
@@ -210,9 +214,8 @@ export function ContactsExcelImportDialog({
                           <div className="min-w-0">
                             <div className="truncate font-medium">{r.normalizedName}</div>
                             <div className="truncate text-muted-foreground">
-                              {r.isNew ? "создать" : r.matchedContactName} ·{" "}
-                              {r.amount > 0 ? "Салынған" : "Қарыз"}:{" "}
-                              {fmtContactBalancePlain("USD", r.amount)}
+                              {r.isNew ? "создать" : r.matchedContactName} · {groupLabel(r)}:{" "}
+                              {fmtContactBalancePlain(r.currency, r.amount)}
                             </div>
                           </div>
                         </div>
@@ -254,7 +257,7 @@ export function ContactsExcelImportDialog({
                 className="gap-2"
               >
                 <Upload className="h-4 w-4" />
-                Сверить USD
+                Сверить счета
               </Button>
             )}
           </DialogFooter>
@@ -264,11 +267,11 @@ export function ContactsExcelImportDialog({
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Подтвердить импорт USD?</AlertDialogTitle>
+            <AlertDialogTitle>Подтвердить импорт?</AlertDialogTitle>
             <AlertDialogDescription>
-              Балансы {rows?.length ?? 0} контактов будут приведены к Excel. Будет создано{" "}
-              {newRows.length} новых. {removedContacts.length} контактов будут удалены без
-              возможности восстановления.
+              Балансы {rows?.length ?? 0} записей (USD + KZT) будут приведены к Excel. Будет
+              создано {newRows.length} новых контактов. {removedContacts.length} контактов будут
+              удалены.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

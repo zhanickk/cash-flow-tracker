@@ -155,10 +155,14 @@ export async function parseUsdContactsExcel(buffer: ArrayBuffer): Promise<Parsed
   };
 }
 
-/** Сводит строки Excel в один баланс USD на контакт (положительный = Салынған, отрицательный = Қарыз). */
-export function mergeUsdTargets(rows: ParsedBalanceRow[]): ParsedBalanceRow[] {
+/** Сводит строки Excel в один баланс на контакт для указанной валюты. */
+export function mergeCurrencyTargets(
+  rows: ParsedBalanceRow[],
+  currency: "KZT" | "USD",
+): ParsedBalanceRow[] {
+  const filtered = rows.filter((r) => r.currency === currency);
   const byKey = new Map<string, ParsedBalanceRow>();
-  for (const row of rows) {
+  for (const row of filtered) {
     const key = nameKey(row.normalizedName);
     const prev = byKey.get(key);
     if (!prev) {
@@ -169,8 +173,25 @@ export function mergeUsdTargets(rows: ParsedBalanceRow[]): ParsedBalanceRow[] {
     byKey.set(key, {
       ...prev,
       amount,
-      group: amount >= 0 ? "доллар САЛЫНГАН" : "доллар КАРЫЗ",
+      group:
+        currency === "USD"
+          ? amount >= 0
+            ? "доллар САЛЫНГАН"
+            : "доллар КАРЫЗ"
+          : amount >= 0
+            ? "тенге плюс"
+            : "тенге минус",
     });
   }
   return [...byKey.values()];
+}
+
+/** Сводит строки Excel в один баланс USD на контакт (положительный = Салынған, отрицательный = Қарыз). */
+export function mergeUsdTargets(rows: ParsedBalanceRow[]): ParsedBalanceRow[] {
+  return mergeCurrencyTargets(rows, "USD");
+}
+
+/** Сводит KZT-строки Excel в один баланс на контакт (плюс / минус). */
+export function mergeKztTargets(rows: ParsedBalanceRow[]): ParsedBalanceRow[] {
+  return mergeCurrencyTargets(rows, "KZT");
 }

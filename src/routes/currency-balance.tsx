@@ -296,8 +296,8 @@ function CurrencyBalancePage() {
             </div>
             <Button size="sm" variant="outline" className="gap-1" asChild>
               <Link to="/contacts">
-                <Users className="h-4 w-4" />
-                Клиенты
+                <Wallet className="h-4 w-4" />
+                Валютные счета
               </Link>
             </Button>
           </div>

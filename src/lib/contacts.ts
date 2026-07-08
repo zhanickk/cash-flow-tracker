@@ -13,6 +13,7 @@ import {
 } from "@/lib/contact-currencies";
 import { inferTxType, type ContactTxType } from "@/lib/fx-pots";
 import { recomputeUsdSaleAllocations } from "@/lib/fx-sales";
+import { appendContactAuditLog, invalidateContactAudit } from "@/lib/contact-audit";
 
 function invalidateFxFromContacts(qc: ReturnType<typeof useQueryClient>, contactId?: string) {
   if (contactId) {
@@ -23,6 +24,7 @@ function invalidateFxFromContacts(qc: ReturnType<typeof useQueryClient>, contact
   qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
   qc.invalidateQueries({ queryKey: ["fx-sales"] });
   qc.invalidateQueries({ queryKey: ["fx-risk-dashboard"] });
+  invalidateContactAudit(qc);
 }
 
 async function afterContactLedgerChange(currency?: string) {
@@ -222,6 +224,15 @@ export function useAddContactTransaction() {
           input.note ? ` — ${input.note}` : ""
         }`,
       });
+      await appendContactAuditLog({
+        contact_id: input.contactId,
+        contact_name: contactName,
+        action: "add",
+        currency: input.currency,
+        amount: input.amount,
+        summary: `${journalAmount(input.currency, input.amount)}${input.note ? ` — ${input.note}` : ""}`,
+        source: "app",
+      });
       if (input.currency === "USD") await recomputeUsdSaleAllocations();
       return data;
     },
@@ -265,6 +276,17 @@ export function useUpdateContactTransaction() {
         summary: `Контакт «${contactName}»: изменена операция → ${journalAmount(row.currency, Number(row.amount))}${
           row.note ? ` — ${row.note}` : ""
         }`,
+      });
+      await appendContactAuditLog({
+        contact_id: input.contactId,
+        contact_name: contactName,
+        action: "edit",
+        currency: row.currency,
+        amount: Number(row.amount),
+        summary: `Изменена операция → ${journalAmount(row.currency, Number(row.amount))}${
+          row.note ? ` — ${row.note}` : ""
+        }`,
+        source: "app",
       });
       await afterContactLedgerChange(row.currency);
     },
@@ -428,6 +450,30 @@ export function useImportContactBalancesFromExcel() {
           : `Импорт Excel (лист ${input.sheetLabel}): сверка ${inserts.length} счетов, создано контактов ${created}`,
       });
 
+      for (const ins of inserts) {
+        const contact = contactList.find((c) => c.id === ins.contact_id);
+        await appendContactAuditLog({
+          contact_id: ins.contact_id,
+          contact_name: contact?.name ?? "—",
+          action: "import",
+          currency: ins.currency,
+          amount: ins.amount,
+          summary: ins.note,
+          source: "excel_import",
+        });
+      }
+      if (input.deleteMissing && removed > 0) {
+        for (const contact of toRemove) {
+          await appendContactAuditLog({
+            contact_id: null,
+            contact_name: contact.name,
+            action: "delete",
+            summary: `Контакт удалён при импорте Excel (лист ${input.sheetLabel}) — отсутствует в файле`,
+            source: "excel_import",
+          });
+        }
+      }
+
       return {
         reconciled: inserts.length,
         created,
@@ -465,6 +511,17 @@ export function useDeleteContactTransaction() {
           row.note ? ` — ${row.note}` : ""
         }`,
       });
+      await appendContactAuditLog({
+        contact_id: row.contact_id,
+        contact_name: contactName,
+        action: "delete",
+        currency: row.currency,
+        amount: Number(row.amount),
+        summary: `Удалена операция ${journalAmount(row.currency, Number(row.amount))}${
+          row.note ? ` — ${row.note}` : ""
+        }`,
+        source: "app",
+      });
       await afterContactLedgerChange(row.currency);
       return { contact_id: row.contact_id };
     },
@@ -484,10 +541,18 @@ export function useCreateContact() {
         .select()
         .single();
       if (error) throw error;
+      await appendContactAuditLog({
+        contact_id: data.id,
+        contact_name: data.name,
+        action: "create_contact",
+        summary: `Создан контакт «${data.name}»`,
+        source: "app",
+      });
       return data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+      invalidateContactAudit(qc);
     },
   });
 }
@@ -595,6 +660,15 @@ export function useAddContactConversion() {
         action: "add",
         summary: `Контакт «${contactName}»: ${note}`,
       });
+      await appendContactAuditLog({
+        contact_id: input.contactId,
+        contact_name: contactName,
+        action: "conversion",
+        currency: `${input.fromCurrency}→${input.toCurrency}`,
+        amount: input.fromAmount,
+        summary: note,
+        source: "conversion",
+      });
       return conversion;
     },
     onSuccess: (_data, vars) => {
@@ -637,6 +711,15 @@ export function useDeleteContactConversion() {
       await insertHistory({
         action: "delete",
         summary: `Контакт «${contactName}»: удалена конвертация ${note}`,
+      });
+      await appendContactAuditLog({
+        contact_id: row.contact_id,
+        contact_name: contactName,
+        action: "delete",
+        currency: `${row.from_currency}→${row.to_currency}`,
+        amount: Number(row.from_amount),
+        summary: `Удалена конвертация ${note}`,
+        source: "conversion",
       });
       return { contact_id: row.contact_id };
     },

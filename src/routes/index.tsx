@@ -689,9 +689,15 @@ function Index() {
             Лица на балансе (сегодня)
           </Button>
           <Button variant="outline" className="w-full gap-2" asChild>
-            <Link to="/contacts">
+            <Link to="/contacts-full">
               <Users className="h-4 w-4" />
               Контакты (полная база)
+            </Link>
+          </Button>
+          <Button variant="outline" className="w-full gap-2" asChild>
+            <Link to="/contacts">
+              <Wallet className="h-4 w-4" />
+              Валютные счета
             </Link>
           </Button>
           <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
