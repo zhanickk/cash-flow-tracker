@@ -361,8 +361,15 @@ export function useImportContactBalancesFromExcel() {
         targetsByPersonCurrency.set(`${nameKey(target.normalizedName)}:${target.currency}`, target);
       }
 
-      const namesOnSheet = new Set(
-        [...targetsByPersonCurrency.values()].map((t) => nameKey(t.normalizedName)),
+      const kztNamesOnSheet = new Set(
+        [...targetsByPersonCurrency.values()]
+          .filter((t) => t.currency === "KZT")
+          .map((t) => nameKey(t.normalizedName)),
+      );
+      const usdNamesOnSheet = new Set(
+        [...targetsByPersonCurrency.values()]
+          .filter((t) => t.currency === "USD")
+          .map((t) => nameKey(t.normalizedName)),
       );
       const inserts: {
         contact_id: string;
@@ -407,8 +414,15 @@ export function useImportContactBalancesFromExcel() {
         applyPendingDelta(contact.id, target.currency, delta);
       }
 
-      const toRemove = contactList.filter((c) => !namesOnSheet.has(nameKey(c.name)));
+      // Excel-файл описывает только KZT (тенге плюс/минус) и USD (САЛЫНГАН/КАРЫЗ) —
+      // каждая валюта сверяется независимо: контакт мог остаться в тенговых
+      // колонках, но пропасть из САЛЫНГАН/КАРЫЗ (или наоборот). Другие валюты
+      // (EUR/RUB/…) этот файл не описывает и импорт их не трогает.
+      const toRemove = contactList.filter(
+        (c) => !kztNamesOnSheet.has(nameKey(c.name)) && !usdNamesOnSheet.has(nameKey(c.name)),
+      );
       let removed = 0;
+      let zeroedContacts = 0;
 
       if (input.deleteMissing) {
         if (toRemove.length > 0) {
@@ -423,20 +437,28 @@ export function useImportContactBalancesFromExcel() {
           removed = toRemove.length;
         }
       } else {
-        for (const contact of toRemove) {
-          const contactTxs = txsByContact.get(contact.id) ?? [];
-          const balances = computeBalancesFromAmounts(contactTxs);
-          for (const [currency, balance] of Object.entries(balances)) {
-            if (Math.abs(balance) < 0.0001) continue;
+        for (const contact of contactList) {
+          const key = nameKey(contact.name);
+          let touched = false;
+          for (const currency of ["KZT", "USD"] as const) {
+            const onSheet = currency === "KZT" ? kztNamesOnSheet.has(key) : usdNamesOnSheet.has(key);
+            if (onSheet) continue; // уже сверено основным циклом выше
+            const current = currentBalance(contact.id, currency);
+            if (Math.abs(current) < 0.0001) continue;
             inserts.push({
               contact_id: contact.id,
               currency,
-              amount: -balance,
-              note: `Сверка: контакт отсутствует на листе Excel (лист ${input.sheetLabel}) — обнуление`,
+              amount: -current,
+              note: `Сверка: контакт отсутствует в колонке ${
+                currency === "USD" ? "САЛЫНГАН/КАРЫЗ" : "тенге плюс/минус"
+              } на листе Excel (лист ${input.sheetLabel}) — обнуление`,
               source: "excel_import",
-              tx_type: inferTxType(-balance, "excel_import"),
+              tx_type: inferTxType(-current, "excel_import"),
             });
+            applyPendingDelta(contact.id, currency, -current);
+            touched = true;
           }
+          if (touched) zeroedContacts++;
         }
       }
 
@@ -480,7 +502,7 @@ export function useImportContactBalancesFromExcel() {
       return {
         reconciled: inserts.length,
         created,
-        removed: input.deleteMissing ? removed : toRemove.length,
+        removed: input.deleteMissing ? removed : zeroedContacts,
       };
     },
     onSuccess: () => {

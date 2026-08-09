@@ -97,8 +97,21 @@ export function ContactsExcelImportDialog({
     }
   }
 
-  const namesOnSheet = new Set((rows ?? []).map((r) => nameKey(r.normalizedName)));
-  const removedContacts = contacts.filter((c) => !namesOnSheet.has(nameKey(c.name)));
+  // Excel описывает KZT (тенге плюс/минус) и USD (САЛЫНГАН/КАРЫЗ) независимо —
+  // контакт может остаться в одной колонке и пропасть из другой, тогда обнулится
+  // только пропавшая валюта. Другие валюты (EUR/RUB/…) импорт не трогает.
+  const kztNamesOnSheet = new Set(
+    (rows ?? []).filter((r) => r.currency === "KZT").map((r) => nameKey(r.normalizedName)),
+  );
+  const usdNamesOnSheet = new Set(
+    (rows ?? []).filter((r) => r.currency === "USD").map((r) => nameKey(r.normalizedName)),
+  );
+  const removedContacts = contacts.filter((c) => {
+    const key = nameKey(c.name);
+    const missingKzt = !kztNamesOnSheet.has(key) && Math.abs(c.balances.KZT ?? 0) > 0.0001;
+    const missingUsd = !usdNamesOnSheet.has(key) && Math.abs(c.balances.USD ?? 0) > 0.0001;
+    return missingKzt || missingUsd;
+  });
   const newRows = (rows ?? []).filter((r) => r.isNew);
   const usdRows = (rows ?? []).filter((r) => r.currency === "USD");
   const kztRows = (rows ?? []).filter((r) => r.currency === "KZT");
