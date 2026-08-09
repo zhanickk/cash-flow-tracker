@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import type { Tables } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
 import { nameKey } from "@/lib/contacts-excel-import";
@@ -84,13 +85,14 @@ export function useContactsWithBalances() {
   return useQuery({
     queryKey: ["contacts-with-balances"],
     queryFn: async (): Promise<ContactWithBalance[]> => {
-      const [{ data: contacts, error: cErr }, { data: txs, error: tErr }] = await Promise.all([
+      const [{ data: contacts, error: cErr }, txs] = await Promise.all([
         supabase.from("contacts").select("*"),
-        supabase.from("contact_transactions").select("*"),
+        fetchAllRows<ContactTransaction>((from, to) =>
+          supabase.from("contact_transactions").select("*").range(from, to),
+        ),
       ]);
       if (cErr) throw cErr;
-      if (tErr) throw tErr;
-      return aggregateBalances(contacts ?? [], txs ?? []);
+      return aggregateBalances(contacts ?? [], txs);
     },
   });
 }
@@ -312,15 +314,16 @@ export function useImportContactBalancesFromExcel() {
       /** Удалить контакты, которых нет в Excel (иначе — только обнулить балансы). */
       deleteMissing?: boolean;
     }): Promise<{ reconciled: number; created: number; removed: number }> => {
-      const [{ data: contacts, error: cErr }, { data: allTxs, error: tErr }] = await Promise.all([
+      const [{ data: contacts, error: cErr }, allTxs] = await Promise.all([
         supabase.from("contacts").select("*"),
-        supabase.from("contact_transactions").select("*"),
+        fetchAllRows<ContactTransaction>((from, to) =>
+          supabase.from("contact_transactions").select("*").range(from, to),
+        ),
       ]);
       if (cErr) throw cErr;
-      if (tErr) throw tErr;
 
       const contactList = contacts ?? [];
-      const txs = allTxs ?? [];
+      const txs = allTxs;
 
       const contactByKey = new Map<string, Contact>();
       for (const c of contactList) {

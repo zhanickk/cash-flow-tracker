@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { fmt } from "@/lib/cash-shared";
 import { cashRowsToMappedSales } from "@/lib/fx-sale-map";
 import {
@@ -9,12 +10,12 @@ import {
 
 /** Пересчитать и сохранить karyz/salynghan_amount для всех USD-продаж. */
 export async function recomputeUsdSaleAllocations(): Promise<void> {
-  const [{ data: contactTxs }, { data: cashRows }] = await Promise.all([
-    supabase.from("contact_transactions").select("*"),
+  const [contactTxs, { data: cashRows }] = await Promise.all([
+    fetchAllRows((from, to) => supabase.from("contact_transactions").select("*").range(from, to)),
     supabase.from("cash_transactions").select("*").eq("kind", "sell").eq("currency", "USD").order("ts"),
   ]);
   const sales = cashRowsToMappedSales(cashRows ?? []);
-  const { enriched } = replayUsdSales((contactTxs ?? []) as ContactTx[], sales);
+  const { enriched } = replayUsdSales(contactTxs as ContactTx[], sales);
   await Promise.all(
     enriched.map((s) =>
       supabase
@@ -33,8 +34,8 @@ export async function computeUsdAllocationForNewSale(input: {
   rate: number;
   occurredAt: string;
 }): Promise<{ karyzAmount: number; salynghanAmount: number; warning?: string }> {
-  const [{ data: contactTxs }, { data: cashRows }] = await Promise.all([
-    supabase.from("contact_transactions").select("*"),
+  const [contactTxs, { data: cashRows }] = await Promise.all([
+    fetchAllRows((from, to) => supabase.from("contact_transactions").select("*").range(from, to)),
     supabase
       .from("cash_transactions")
       .select("*")

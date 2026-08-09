@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import { frozenSalynghanKzt, replayUsdSales, type ContactTx } from "@/lib/fx-pots";
 import { cashRowsToMappedSales } from "@/lib/fx-sale-map";
 
@@ -9,13 +10,13 @@ export function useFxRiskDashboard() {
   return useQuery({
     queryKey: RISK_KEY,
     queryFn: async () => {
-      const [{ data: contactTxs }, { data: cashRows }, { data: settings }] = await Promise.all([
-        supabase.from("contact_transactions").select("*"),
+      const [contactTxs, { data: cashRows }, { data: settings }] = await Promise.all([
+        fetchAllRows((from, to) => supabase.from("contact_transactions").select("*").range(from, to)),
         supabase.from("cash_transactions").select("*").eq("kind", "sell").order("ts"),
         supabase.from("app_settings").select("global_rate").eq("id", true).maybeSingle(),
       ]);
       const sales = cashRowsToMappedSales(cashRows ?? []);
-      const replay = replayUsdSales((contactTxs ?? []) as ContactTx[], sales);
+      const replay = replayUsdSales(contactTxs as ContactTx[], sales);
       const frozen = frozenSalynghanKzt(replay.enriched);
 
       const dailyRows = [...frozen.byDay.entries()]

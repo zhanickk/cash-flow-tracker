@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import type { Tables } from "@/integrations/supabase/types";
 import { FX_CURRENCIES } from "@/lib/cash-shared";
 import type { FxSale } from "@/lib/fx-sales";
@@ -179,12 +180,12 @@ export function useCurrencyHoldings() {
     }> => {
       const [
         { data: currencies, error: cErr },
-        { data: contactTxs, error: ctErr },
+        contactTxs,
         { data: sellRows, error: tErr },
         { data: usdFxRows, error: uErr },
       ] = await Promise.all([
         supabase.from("fx_currencies").select("*").eq("is_active", true).order("sort_order"),
-        supabase.from("contact_transactions").select("*"),
+        fetchAllRows((from, to) => supabase.from("contact_transactions").select("*").range(from, to)),
         supabase.from("cash_transactions").select("*").eq("kind", "sell").order("ts", { ascending: false }),
         supabase
           .from("cash_transactions")
@@ -194,7 +195,6 @@ export function useCurrencyHoldings() {
           .order("ts", { ascending: false }),
       ]);
       if (cErr) throw cErr;
-      if (ctErr) throw ctErr;
       if (tErr) throw tErr;
       if (uErr) throw uErr;
 
