@@ -108,7 +108,7 @@ export function ContactsExcelImportDialog({
     importMutation.mutate(
       {
         sheetLabel: sheetName,
-        deleteMissing: true,
+        deleteMissing: false,
         targets: rows.map((r) => ({
           rawName: r.rawName,
           normalizedName: r.normalizedName,
@@ -120,7 +120,7 @@ export function ContactsExcelImportDialog({
         onSuccess: (data) => {
           setConfirmOpen(false);
           setResultMsg(
-            `Готово: ${data.reconciled} корректировок, создано ${data.created}, удалено ${data.removed} контактов.`,
+            `Готово: ${data.reconciled} корректировок, создано ${data.created}, обнулено ${data.removed} контактов.`,
           );
           setRows(null);
         },
@@ -145,7 +145,7 @@ export function ContactsExcelImportDialog({
             </DialogTitle>
             <DialogDescription>
               Последний лист: тенге плюс/минус и USD САЛЫНГАН/КАРЫЗ. Балансы приводятся к Excel.
-              Контакты, которых нет в файле, будут удалены.
+              Контакты, которых нет в файле, не удаляются — их счета обнуляются.
             </DialogDescription>
           </DialogHeader>
 
@@ -197,8 +197,8 @@ export function ContactsExcelImportDialog({
                   </span>
                   <span>
                     Новые: <span className="font-medium text-primary">{newRows.length}</span> ·
-                    Удалить:{" "}
-                    <span className="font-medium text-danger">{removedContacts.length}</span>
+                    Обнулить:{" "}
+                    <span className="font-medium text-accent-foreground">{removedContacts.length}</span>
                   </span>
                 </div>
                 <div className="max-h-52 overflow-y-auto rounded-md border border-border">
@@ -224,10 +224,10 @@ export function ContactsExcelImportDialog({
                   </ul>
                 </div>
                 {removedContacts.length > 0 && (
-                  <div className="rounded-md border border-danger/30 bg-danger-soft/30 p-2 text-xs">
-                    <div className="mb-1 flex items-center gap-1 font-medium text-danger">
+                  <div className="rounded-md border border-accent bg-accent/40 p-2 text-xs">
+                    <div className="mb-1 flex items-center gap-1 font-medium text-accent-foreground">
                       <Trash2 className="h-3.5 w-3.5" />
-                      Будут удалены ({removedContacts.length}):
+                      Счета будут обнулены, контакты останутся ({removedContacts.length}):
                     </div>
                     <div className="max-h-28 overflow-y-auto">
                       <div className="flex flex-wrap gap-1">
@@ -270,8 +270,8 @@ export function ContactsExcelImportDialog({
             <AlertDialogTitle>Подтвердить импорт?</AlertDialogTitle>
             <AlertDialogDescription>
               Балансы {rows?.length ?? 0} записей (USD + KZT) будут приведены к Excel. Будет
-              создано {newRows.length} новых контактов. {removedContacts.length} контактов будут
-              удалены.
+              создано {newRows.length} новых контактов. У {removedContacts.length} контактов,
+              которых нет в файле, счета будут обнулены (сами контакты не удаляются).
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

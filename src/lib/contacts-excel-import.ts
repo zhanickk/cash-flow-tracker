@@ -36,6 +36,42 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
 
+/** Служебные пометки, которые встречаются в колонках плюс/минус/САЛЫНГАН/КАРЫЗ,
+ * но не являются именами контактов (категории учёта, суммы по кассе и т.п.). */
+const NON_CONTACT_KEYWORDS = new Set([
+  "доход",
+  "расход",
+  "аренда",
+  "тамак",
+  "клиент",
+  "запчасть",
+  "запчачть",
+  "касса",
+  "зарплата",
+  "остаток",
+  "ост",
+  "итого",
+]);
+
+/** Заметки о конвертации в другую валюту, записанные прямо в имени без пробела,
+ * например «Евро56215х552,397», «РУБ 3819000х5,925», «юань 139300х72,095» — это
+ * не контакт, а бухгалтерская запись о расходе в другой валюте. */
+const CURRENCY_NOTE_RE =
+  /^(евро|eur|алтын|золото|руб(ль)?|rub|юань|cny|сом|kgs|доллар|usd|тенге|kzt)\s*[\d.,]/i;
+
+/** Имя состоит только из цифр — явно не человек. */
+const NUMERIC_ONLY_RE = /^\d+$/;
+
+export function isNonContactName(rawName: string): boolean {
+  const trimmed = rawName.trim();
+  if (!trimmed) return true;
+  if (/^(доллар|тенге|usd|kzt)$/i.test(trimmed)) return true;
+  if (NON_CONTACT_KEYWORDS.has(trimmed.toLowerCase())) return true;
+  if (CURRENCY_NOTE_RE.test(trimmed)) return true;
+  if (NUMERIC_ONLY_RE.test(trimmed)) return true;
+  return false;
+}
+
 function cellAt(ws: XLSX.WorkSheet, row: number, col: number): unknown {
   const addr = XLSX.utils.encode_cell({ r: row - 1, c: col - 1 });
   return ws[addr]?.v;
@@ -76,7 +112,7 @@ function collectColumn(
     const amountVal = cellAt(ws, r, amountCol);
     if (!isNonEmptyString(nameVal) || !isFiniteNumber(amountVal)) continue;
     const rawName = nameVal.trim();
-    if (/^(доллар|тенге|usd|kzt)$/i.test(rawName)) continue;
+    if (isNonContactName(rawName)) continue;
     out.push({
       rawName,
       normalizedName: normalizeContactName(rawName),
