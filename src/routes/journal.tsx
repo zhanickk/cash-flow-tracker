@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useCashHistory } from "@/lib/cash-register";
-import { type HistoryEntry, timeStr } from "@/lib/cash-shared";
+import { type HistoryEntry, timeStr, dateStr, groupByDay } from "@/lib/cash-shared";
 import {
   buildJournalReportWorkbook,
   journalReportFileBaseName,
@@ -33,14 +33,6 @@ const ACTION_LABEL: Record<HistoryEntry["action"], string> = {
   edit: "ИЗМ",
   reset: "СБРОС",
 };
-
-function dateStr(ts: number) {
-  return new Date(ts).toLocaleDateString("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
 
 function JournalPage() {
   const { data: history = [], isLoading } = useCashHistory();
@@ -81,7 +73,6 @@ function JournalPage() {
               </Button>
               <History className="h-5 w-5 text-primary" />
               <h1 className="text-lg font-semibold">Журнал изменений</h1>
-              <span className="text-sm text-muted-foreground">({history.length})</span>
             </div>
             <Button size="sm" className="gap-2" onClick={handleDownload} disabled={busy || history.length === 0}>
               {busy ? <FolderOpen className="h-4 w-4 animate-pulse" /> : <Download className="h-4 w-4" />}
@@ -125,32 +116,42 @@ function JournalPage() {
             ) : filtered.length === 0 ? (
               <div className="p-6 text-center text-sm text-muted-foreground">Ничего не найдено</div>
             ) : (
-              <ul className="divide-y divide-border">
-                {filtered.map((h) => (
-                  <li key={h.id} className="flex items-start gap-3 px-4 py-2.5 text-sm">
-                    <span className="w-24 shrink-0 tabular-nums text-muted-foreground">
-                      {dateStr(h.ts)} {timeStr(h.ts)}
+              groupByDay(filtered, (h) => h.ts).map((group) => (
+                <div key={group.key}>
+                  <div className="sticky top-[57px] z-20 border-y border-border bg-muted px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {group.label}
+                    <span className="ml-2 font-normal normal-case text-muted-foreground/70">
+                      ({group.items.length})
                     </span>
-                    <span
-                      className={cn(
-                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                        h.action === "add" && "bg-success-soft text-success",
-                        h.action === "delete" && "bg-danger-soft text-danger",
-                        h.action === "edit" && "bg-accent text-accent-foreground",
-                        h.action === "reset" && "bg-destructive text-destructive-foreground",
-                      )}
-                    >
-                      {ACTION_LABEL[h.action]}
-                    </span>
-                    <span className="text-foreground">{h.summary}</span>
-                    {h.cashierName && (
-                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                        {h.cashierName}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                  </div>
+                  <ul className="divide-y divide-border">
+                    {group.items.map((h) => (
+                      <li key={h.id} className="flex items-start gap-3 px-4 py-2.5 text-sm">
+                        <span className="w-14 shrink-0 tabular-nums text-muted-foreground">
+                          {timeStr(h.ts)}
+                        </span>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                            h.action === "add" && "bg-success-soft text-success",
+                            h.action === "delete" && "bg-danger-soft text-danger",
+                            h.action === "edit" && "bg-accent text-accent-foreground",
+                            h.action === "reset" && "bg-destructive text-destructive-foreground",
+                          )}
+                        >
+                          {ACTION_LABEL[h.action]}
+                        </span>
+                        <span className="text-foreground">{h.summary}</span>
+                        {h.cashierName && (
+                          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                            {h.cashierName}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
             )}
           </CardContent>
         </Card>

@@ -96,6 +96,7 @@ import {
   txDeltas,
   txLabel,
   timeStr,
+  groupByDay,
 } from "@/lib/cash-shared";
 import {
   useCashTransactions,
@@ -573,7 +574,7 @@ function Index() {
             <CardHeader className="flex flex-row items-center justify-between space-y-0 py-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <History className="h-5 w-5 text-primary" />
-                Журнал изменений ({history.length})
+                Журнал изменений
               </CardTitle>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="sm" className="gap-1" asChild>
@@ -595,38 +596,45 @@ function Index() {
                   </div>
                 ) : (
                   <ScrollArea className="h-64 rounded-md border border-border bg-muted/40">
-                    <ul className="divide-y divide-border">
-                      {[...history].reverse().map((h) => (
-                        <li key={h.id} className="flex items-start gap-3 px-3 py-2 text-xs">
-                          <span className="shrink-0 tabular-nums text-muted-foreground">
-                            {timeStr(h.ts)}
-                          </span>
-                          <span
-                            className={cn(
-                              "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                              h.action === "add" && "bg-success-soft text-success",
-                              h.action === "delete" && "bg-danger-soft text-danger",
-                              h.action === "edit" && "bg-accent text-accent-foreground",
-                              h.action === "reset" && "bg-destructive text-destructive-foreground",
-                            )}
-                          >
-                            {h.action === "add"
-                              ? "ДОБ"
-                              : h.action === "delete"
-                                ? "УДАЛ"
-                                : h.action === "edit"
-                                  ? "ИЗМ"
-                                  : "СБРОС"}
-                          </span>
-                          <span className="text-foreground">{h.summary}</span>
-                          {h.cashierName && (
-                            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                              {h.cashierName}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                    {groupByDay([...history].reverse(), (h) => h.ts).map((group) => (
+                      <div key={group.key}>
+                        <div className="sticky top-0 z-10 border-b border-border bg-muted px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {group.label}
+                        </div>
+                        <ul className="divide-y divide-border">
+                          {group.items.map((h) => (
+                            <li key={h.id} className="flex items-start gap-3 px-3 py-2 text-xs">
+                              <span className="shrink-0 tabular-nums text-muted-foreground">
+                                {timeStr(h.ts)}
+                              </span>
+                              <span
+                                className={cn(
+                                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                                  h.action === "add" && "bg-success-soft text-success",
+                                  h.action === "delete" && "bg-danger-soft text-danger",
+                                  h.action === "edit" && "bg-accent text-accent-foreground",
+                                  h.action === "reset" && "bg-destructive text-destructive-foreground",
+                                )}
+                              >
+                                {h.action === "add"
+                                  ? "ДОБ"
+                                  : h.action === "delete"
+                                    ? "УДАЛ"
+                                    : h.action === "edit"
+                                      ? "ИЗМ"
+                                      : "СБРОС"}
+                              </span>
+                              <span className="text-foreground">{h.summary}</span>
+                              {h.cashierName && (
+                                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                                  {h.cashierName}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                   </ScrollArea>
                 )}
               </CardContent>

@@ -57,16 +57,31 @@ export function useCashTransactions() {
   });
 }
 
+/** Supabase/PostgREST caps a single request at 1000 rows by default, so once the
+ * journal grows past that the oldest/most-recent entries silently disappear.
+ * Page through with .range() until a page comes back short. */
+async function fetchAllCashHistory(): Promise<CashHistoryRow[]> {
+  const pageSize = 1000;
+  const rows: CashHistoryRow[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("cash_register_history")
+      .select("*")
+      .order("ts", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+  }
+  return rows;
+}
+
 export function useCashHistory() {
   return useQuery({
     queryKey: HISTORY_KEY,
     queryFn: async (): Promise<HistoryEntry[]> => {
-      const { data, error } = await supabase
-        .from("cash_register_history")
-        .select("*")
-        .order("ts", { ascending: true });
-      if (error) throw error;
-      return (data ?? []).map(rowToHistory);
+      const rows = await fetchAllCashHistory();
+      return rows.map(rowToHistory);
     },
   });
 }

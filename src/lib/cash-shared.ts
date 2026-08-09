@@ -112,3 +112,35 @@ export function txLabel(tx: Transaction): string {
 export function timeStr(ts: number) {
   return new Date(ts).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
+
+export function dateStr(ts: number) {
+  return new Date(ts).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/** Локальный (по времени браузера) ключ дня "YYYY-MM-DD" для группировки. */
+function dayKey(ts: number) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export interface DayGroup<T> {
+  key: string;
+  label: string;
+  items: T[];
+}
+
+/** Группирует записи по календарным дням, сохраняя исходный (уже отсортированный) порядок. */
+export function groupByDay<T>(items: T[], getTs: (item: T) => number): DayGroup<T>[] {
+  const groups: DayGroup<T>[] = [];
+  let current: DayGroup<T> | null = null;
+  for (const item of items) {
+    const ts = getTs(item);
+    const key = dayKey(ts);
+    if (!current || current.key !== key) {
+      current = { key, label: dateStr(ts), items: [] };
+      groups.push(current);
+    }
+    current.items.push(item);
+  }
+  return groups;
+}
