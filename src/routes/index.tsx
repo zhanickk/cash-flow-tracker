@@ -141,7 +141,11 @@ function formatInputValue(s: string): string {
 function formatRateInput(s: string, currency: Currency): string {
   const digits = s.replace(/\D/g, "");
   if (!digits) return "";
-  if (currency === "GOLD" || currency === "KZT") return digits;
+  if (currency === "GOLD" || currency === "KZT") {
+    // Целый курс без десятичных (напр. 42000 ₸/гр) — группируем пробелами, как везде на сайте,
+    // иначе большое число сливается в нечитаемую стену цифр.
+    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
   const minInt = currency === "CNY" ? 2 : currency === "RUB" || currency === "KGS" ? 1 : 3;
   const fracMax = 4;
   if (digits.length <= minInt) return digits;
@@ -160,7 +164,7 @@ function rateToDigits(rate: number, currency: Currency): string {
 }
 
 function ratePlaceholder(currency: Currency): string {
-  if (currency === "GOLD") return "470";
+  if (currency === "GOLD") return "42 000";
   if (currency === "RUB" || currency === "KGS") return "4.0000";
   if (currency === "CNY") return "47.0000";
   if (currency === "USD" || currency === "EUR") return "470.0000";
@@ -1478,7 +1482,12 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, lockName, excludeKz
           <span className="tabular-nums">
             {fmt(tx.amount)} {CURRENCY_FLAG[tx.currency]} {tx.currency}
           </span>
-          {tx.rate ? <span className="text-muted-foreground"> × {tx.rate}</span> : null}
+          {tx.rate ? (
+            <span className="text-muted-foreground">
+              {" "}
+              × {fmt(tx.rate, tx.currency === "GOLD" || tx.currency === "KZT" ? 0 : 4)}
+            </span>
+          ) : null}
         </span>
       </div>
       <div className="flex shrink-0 gap-1 opacity-60 transition group-hover:opacity-100">
