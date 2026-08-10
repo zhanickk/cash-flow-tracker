@@ -84,13 +84,22 @@ function computeCurrencyIncome(
       costKzt += e.kztAmount;
       continue;
     }
+    // Часть продажи, у которой есть реальная себестоимость (обеспечена
+    // учтёнными покупками), и часть, которой нет (остаток qty < объёма
+    // продажи — валюта продана раньше, чем мы начали вести журнал покупок,
+    // либо продано больше, чем куплено). Для необеспеченной части себестоимость
+    // неизвестна — считаем её равной сумме продажи (доход = 0 по этой части),
+    // а не нулю (что раньше превращало всю сумму продажи в «доход» и давало
+    // нереалистично раздутые цифры).
+    const backedAmount = Math.min(qty, e.foreignAmount);
+    const unbackedAmount = e.foreignAmount - backedAmount;
     const avgCost = qty > 0 ? costKzt / qty : 0;
-    const saleCost = e.foreignAmount * avgCost;
-    qty -= e.foreignAmount;
-    costKzt -= saleCost;
-    // Продано больше, чем когда-либо куплено (нет истории покупок до этой
-    // продажи — например, она случилась раньше, чем мы начали вести журнал
-    // покупок). Не даём остатку/себестоимости уйти в минус из-за этого.
+    const backedCost = backedAmount * avgCost;
+    const unbackedCost =
+      unbackedAmount > 0 ? (unbackedAmount / e.foreignAmount) * e.kztAmount : 0;
+    const saleCost = backedCost + unbackedCost;
+    qty -= backedAmount;
+    costKzt -= backedCost;
     if (qty < 0) {
       qty = 0;
       costKzt = 0;
