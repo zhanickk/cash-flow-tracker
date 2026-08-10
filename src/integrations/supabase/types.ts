@@ -327,6 +327,33 @@ export type Database = {
         }
         Relationships: []
       }
+      fx_currencies: {
+        Row: {
+          code: string
+          created_at: string
+          is_active: boolean
+          label: string
+          sort_order: number
+          symbol: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          is_active?: boolean
+          label: string
+          sort_order?: number
+          symbol?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          is_active?: boolean
+          label?: string
+          sort_order?: number
+          symbol?: string | null
+        }
+        Relationships: []
+      }
       fx_currency_holdings: {
         Row: {
           created_at: string
@@ -359,38 +386,68 @@ export type Database = {
           {
             foreignKeyName: "fx_currency_holdings_currency_code_fkey"
             columns: ["currency_code"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "fx_currencies"
             referencedColumns: ["code"]
           },
         ]
       }
-      fx_currencies: {
+      fx_purchases: {
         Row: {
-          code: string
+          cash_transaction_id: string | null
+          cashier_name: string | null
           created_at: string
-          is_active: boolean
-          label: string
-          sort_order: number
-          symbol: string | null
+          currency_code: string
+          foreign_amount: number
+          id: string
+          kzt_amount: number
+          note: string | null
+          occurred_at: string
+          rate: number
+          updated_at: string
         }
         Insert: {
-          code: string
+          cash_transaction_id?: string | null
+          cashier_name?: string | null
           created_at?: string
-          is_active?: boolean
-          label: string
-          sort_order?: number
-          symbol?: string | null
+          currency_code: string
+          foreign_amount: number
+          id?: string
+          kzt_amount: number
+          note?: string | null
+          occurred_at?: string
+          rate: number
+          updated_at?: string
         }
         Update: {
-          code?: string
+          cash_transaction_id?: string | null
+          cashier_name?: string | null
           created_at?: string
-          is_active?: boolean
-          label?: string
-          sort_order?: number
-          symbol?: string | null
+          currency_code?: string
+          foreign_amount?: number
+          id?: string
+          kzt_amount?: number
+          note?: string | null
+          occurred_at?: string
+          rate?: number
+          updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "fx_purchases_cash_transaction_id_fkey"
+            columns: ["cash_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "cash_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fx_purchases_currency_code_fkey"
+            columns: ["currency_code"]
+            isOneToOne: false
+            referencedRelation: "fx_currencies"
+            referencedColumns: ["code"]
+          },
+        ]
       }
       fx_rate_overrides: {
         Row: {

@@ -55,6 +55,7 @@ import {
   Link2,
   Link2Off,
   ExternalLink,
+  ArrowLeftRight,
 } from "lucide-react";
 import {
   buildDailyReport,
@@ -712,6 +713,12 @@ function Index() {
             <Link to="/fx-sales">
               <Banknote className="h-4 w-4" />
               Продажа валют (учёт и отчёты)
+            </Link>
+          </Button>
+          <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
+            <Link to="/fx-trades">
+              <ArrowLeftRight className="h-4 w-4" />
+              Купли/продажи по валютам
             </Link>
           </Button>
           <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>

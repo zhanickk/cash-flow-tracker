@@ -8,6 +8,11 @@ import {
   syncFxSaleFromCashTx,
   syncFxSaleUpdateFromCashTx,
 } from "@/lib/fx-sales";
+import {
+  syncFxPurchaseDeleteFromCashTx,
+  syncFxPurchaseFromCashTx,
+  syncFxPurchaseUpdateFromCashTx,
+} from "@/lib/fx-purchases";
 import { getCachedCashierName } from "@/lib/auth";
 
 export type CashTxRow = Tables<"cash_transactions">;
@@ -108,6 +113,7 @@ async function settleCashMutations(
   qc.invalidateQueries({ queryKey: TX_KEY });
   qc.invalidateQueries({ queryKey: HISTORY_KEY });
   qc.invalidateQueries({ queryKey: ["fx-sales"] });
+  qc.invalidateQueries({ queryKey: ["fx-purchases"] });
   qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
   qc.invalidateQueries({ queryKey: ["fx-risk-dashboard"] });
 }
@@ -148,6 +154,17 @@ export function useAddCashTransaction() {
       if (error) throw error;
       if (tx.kind === "sell" && tx.rate) {
         await syncFxSaleFromCashTx({
+          id: tx.id,
+          kind: tx.kind,
+          currency: tx.currency,
+          amount: tx.amount,
+          rate: tx.rate,
+          name: tx.name ?? null,
+          ts: occurredAt,
+        });
+      }
+      if (tx.kind === "buy" && tx.rate) {
+        await syncFxPurchaseFromCashTx({
           id: tx.id,
           kind: tx.kind,
           currency: tx.currency,
@@ -212,6 +229,16 @@ export function useUpdateCashTransaction() {
           ts: merged.ts,
         });
       }
+      if (old.kind === "buy" || merged.kind === "buy") {
+        await syncFxPurchaseUpdateFromCashTx(id, {
+          kind: merged.kind,
+          currency: merged.currency,
+          amount: merged.amount,
+          rate: merged.rate ?? null,
+          name: merged.name ?? null,
+          ts: merged.ts,
+        });
+      }
       const changes: string[] = [];
       if (patch.name !== undefined && patch.name !== old.name)
         changes.push(`имя: "${old.name ?? ""}" → "${patch.name ?? ""}"`);
@@ -252,6 +279,9 @@ export function useDeleteCashTransaction() {
       if (old.kind === "sell") {
         await syncFxSaleDeleteFromCashTx(old.id);
       }
+      if (old.kind === "buy") {
+        await syncFxPurchaseDeleteFromCashTx(old.id);
+      }
       const { error } = await supabase.from("cash_transactions").delete().eq("id", old.id);
       if (error) throw error;
       await insertHistory({ action: "delete", kind: old.kind, summary: `Удалено — ${txLabel(old)}` });
@@ -287,6 +317,7 @@ export function useResetCashRegister() {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
       qc.invalidateQueries({ queryKey: ["fx-sales"] });
+      qc.invalidateQueries({ queryKey: ["fx-purchases"] });
       qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
     },
   });
@@ -322,6 +353,7 @@ export function useNewDayCashRegister() {
       qc.invalidateQueries({ queryKey: TX_KEY });
       qc.invalidateQueries({ queryKey: HISTORY_KEY });
       qc.invalidateQueries({ queryKey: ["fx-sales"] });
+      qc.invalidateQueries({ queryKey: ["fx-purchases"] });
       qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
     },
   });

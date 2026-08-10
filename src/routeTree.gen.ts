@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as JournalRouteImport } from './routes/journal'
+import { Route as FxTradesRouteImport } from './routes/fx-trades'
 import { Route as FxSalesRouteImport } from './routes/fx-sales'
 import { Route as FxRiskRouteImport } from './routes/fx-risk'
 import { Route as CurrencyBalanceRouteImport } from './routes/currency-balance'
@@ -27,6 +28,11 @@ const LoginRoute = LoginRouteImport.update({
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FxTradesRoute = FxTradesRouteImport.update({
+  id: '/fx-trades',
+  path: '/fx-trades',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FxSalesRoute = FxSalesRouteImport.update({
@@ -71,6 +77,7 @@ export interface FileRoutesByFullPath {
   '/currency-balance': typeof CurrencyBalanceRoute
   '/fx-risk': typeof FxRiskRoute
   '/fx-sales': typeof FxSalesRoute
+  '/fx-trades': typeof FxTradesRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -82,6 +89,7 @@ export interface FileRoutesByTo {
   '/currency-balance': typeof CurrencyBalanceRoute
   '/fx-risk': typeof FxRiskRoute
   '/fx-sales': typeof FxSalesRoute
+  '/fx-trades': typeof FxTradesRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -94,6 +102,7 @@ export interface FileRoutesById {
   '/currency-balance': typeof CurrencyBalanceRoute
   '/fx-risk': typeof FxRiskRoute
   '/fx-sales': typeof FxSalesRoute
+  '/fx-trades': typeof FxTradesRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
     | '/currency-balance'
     | '/fx-risk'
     | '/fx-sales'
+    | '/fx-trades'
     | '/journal'
     | '/login'
     | '/contacts/$contactId'
@@ -118,6 +128,7 @@ export interface FileRouteTypes {
     | '/currency-balance'
     | '/fx-risk'
     | '/fx-sales'
+    | '/fx-trades'
     | '/journal'
     | '/login'
     | '/contacts/$contactId'
@@ -129,6 +140,7 @@ export interface FileRouteTypes {
     | '/currency-balance'
     | '/fx-risk'
     | '/fx-sales'
+    | '/fx-trades'
     | '/journal'
     | '/login'
     | '/contacts/$contactId'
@@ -141,6 +153,7 @@ export interface RootRouteChildren {
   CurrencyBalanceRoute: typeof CurrencyBalanceRoute
   FxRiskRoute: typeof FxRiskRoute
   FxSalesRoute: typeof FxSalesRoute
+  FxTradesRoute: typeof FxTradesRoute
   JournalRoute: typeof JournalRoute
   LoginRoute: typeof LoginRoute
   ContactsContactIdRoute: typeof ContactsContactIdRoute
@@ -161,6 +174,13 @@ declare module '@tanstack/react-router' {
       path: '/journal'
       fullPath: '/journal'
       preLoaderRoute: typeof JournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fx-trades': {
+      id: '/fx-trades'
+      path: '/fx-trades'
+      fullPath: '/fx-trades'
+      preLoaderRoute: typeof FxTradesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fx-sales': {
@@ -221,6 +241,7 @@ const rootRouteChildren: RootRouteChildren = {
   CurrencyBalanceRoute: CurrencyBalanceRoute,
   FxRiskRoute: FxRiskRoute,
   FxSalesRoute: FxSalesRoute,
+  FxTradesRoute: FxTradesRoute,
   JournalRoute: JournalRoute,
   LoginRoute: LoginRoute,
   ContactsContactIdRoute: ContactsContactIdRoute,

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
 import { fmt, txLabel, type Currency, type Transaction } from "@/lib/cash-shared";
@@ -129,7 +130,10 @@ export function applyPeriodPreset(period: PeriodPreset, base = new Date()) {
   return { dateFrom: "", dateTo: "" };
 }
 
-export function filterFxSales(sales: FxSale[], filters: FxSalesFilters): FxSale[] {
+export function filterFxSales<T extends { occurredAt: number; currencyCode: string }>(
+  sales: T[],
+  filters: FxSalesFilters,
+): T[] {
   let fromTs = filters.dateFrom ? startOfDay(filters.dateFrom) : -Infinity;
   let toTs = filters.dateTo ? endOfDay(filters.dateTo) : Infinity;
 
@@ -358,12 +362,10 @@ export function useFxSales() {
   return useQuery({
     queryKey: SALES_KEY,
     queryFn: async (): Promise<FxSale[]> => {
-      const { data, error } = await supabase
-        .from("fx_sales")
-        .select("*")
-        .order("occurred_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []).map(fxRowToSale);
+      const rows = await fetchAllRows<FxSaleRow>((from, to) =>
+        supabase.from("fx_sales").select("*").order("occurred_at", { ascending: false }).range(from, to),
+      );
+      return rows.map(fxRowToSale);
     },
   });
 }
