@@ -31,7 +31,7 @@ export interface FxSale {
   allocationLabel?: string;
 }
 
-export type PeriodPreset = "all" | "day" | "week" | "month" | "custom";
+export type PeriodPreset = "all" | "day" | "week" | "month" | "year" | "custom";
 
 export interface FxSalesFilters {
   period: PeriodPreset;
@@ -125,6 +125,10 @@ export function applyPeriodPreset(period: PeriodPreset, base = new Date()) {
   }
   if (period === "month") {
     start.setDate(1);
+    return { dateFrom: toDateInput(start), dateTo: toDateInput(end) };
+  }
+  if (period === "year") {
+    start.setMonth(0, 1);
     return { dateFrom: toDateInput(start), dateTo: toDateInput(end) };
   }
   return { dateFrom: "", dateTo: "" };

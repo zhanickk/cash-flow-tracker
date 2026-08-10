@@ -726,6 +726,12 @@ function Index() {
             </Link>
           </Button>
           <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
+            <Link to="/income-calculator">
+              <Calculator className="h-4 w-4" />
+              Калькулятор дохода
+            </Link>
+          </Button>
+          <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
             <Link to="/currency-balance">
               <Wallet className="h-4 w-4" />
               Трата Жұрттың ақшасы

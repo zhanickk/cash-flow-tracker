@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as JournalRouteImport } from './routes/journal'
+import { Route as IncomeCalculatorRouteImport } from './routes/income-calculator'
 import { Route as FxTradesRouteImport } from './routes/fx-trades'
 import { Route as FxSalesRouteImport } from './routes/fx-sales'
 import { Route as FxRiskRouteImport } from './routes/fx-risk'
@@ -28,6 +29,11 @@ const LoginRoute = LoginRouteImport.update({
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IncomeCalculatorRoute = IncomeCalculatorRouteImport.update({
+  id: '/income-calculator',
+  path: '/income-calculator',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FxTradesRoute = FxTradesRouteImport.update({
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/fx-risk': typeof FxRiskRoute
   '/fx-sales': typeof FxSalesRoute
   '/fx-trades': typeof FxTradesRoute
+  '/income-calculator': typeof IncomeCalculatorRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/fx-risk': typeof FxRiskRoute
   '/fx-sales': typeof FxSalesRoute
   '/fx-trades': typeof FxTradesRoute
+  '/income-calculator': typeof IncomeCalculatorRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/fx-risk': typeof FxRiskRoute
   '/fx-sales': typeof FxSalesRoute
   '/fx-trades': typeof FxTradesRoute
+  '/income-calculator': typeof IncomeCalculatorRoute
   '/journal': typeof JournalRoute
   '/login': typeof LoginRoute
   '/contacts/$contactId': typeof ContactsContactIdRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/fx-risk'
     | '/fx-sales'
     | '/fx-trades'
+    | '/income-calculator'
     | '/journal'
     | '/login'
     | '/contacts/$contactId'
@@ -129,6 +139,7 @@ export interface FileRouteTypes {
     | '/fx-risk'
     | '/fx-sales'
     | '/fx-trades'
+    | '/income-calculator'
     | '/journal'
     | '/login'
     | '/contacts/$contactId'
@@ -141,6 +152,7 @@ export interface FileRouteTypes {
     | '/fx-risk'
     | '/fx-sales'
     | '/fx-trades'
+    | '/income-calculator'
     | '/journal'
     | '/login'
     | '/contacts/$contactId'
@@ -154,6 +166,7 @@ export interface RootRouteChildren {
   FxRiskRoute: typeof FxRiskRoute
   FxSalesRoute: typeof FxSalesRoute
   FxTradesRoute: typeof FxTradesRoute
+  IncomeCalculatorRoute: typeof IncomeCalculatorRoute
   JournalRoute: typeof JournalRoute
   LoginRoute: typeof LoginRoute
   ContactsContactIdRoute: typeof ContactsContactIdRoute
@@ -174,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/journal'
       fullPath: '/journal'
       preLoaderRoute: typeof JournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/income-calculator': {
+      id: '/income-calculator'
+      path: '/income-calculator'
+      fullPath: '/income-calculator'
+      preLoaderRoute: typeof IncomeCalculatorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fx-trades': {
@@ -242,6 +262,7 @@ const rootRouteChildren: RootRouteChildren = {
   FxRiskRoute: FxRiskRoute,
   FxSalesRoute: FxSalesRoute,
   FxTradesRoute: FxTradesRoute,
+  IncomeCalculatorRoute: IncomeCalculatorRoute,
   JournalRoute: JournalRoute,
   LoginRoute: LoginRoute,
   ContactsContactIdRoute: ContactsContactIdRoute,
