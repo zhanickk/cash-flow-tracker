@@ -1565,14 +1565,24 @@ interface AddProps {
 function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
-  const submit = () => {
+  const submit = async () => {
+    // Защита от повторного срабатывания, если несколько раз подряд нажать
+    // Enter/кнопку, пока предыдущая операция ещё не завершилась — иначе
+    // одна и та же транзакция записывается дважды или трижды.
+    if (submitting) return;
     const a = parseAmount(amount);
     if (a <= 0) return;
-    onAdd({ kind: "opening", currency, amount: a });
-    setAmount("");
-    amountRef.current?.focus();
+    setSubmitting(true);
+    try {
+      await onAdd({ kind: "opening", currency, amount: a });
+      setAmount("");
+      amountRef.current?.focus();
+    } finally {
+      setSubmitting(false);
+    }
   };
   return (
     <SectionCard title="Остаток на начало дня" icon={Wallet} tone="primary" badge={`${txs.length}`}>
@@ -1592,6 +1602,7 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         />
         <Button
           onClick={submit}
+          disabled={submitting}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
         >
           <Plus className="h-4 w-4" /> Добавить
@@ -1606,18 +1617,27 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const rateRef = useRef<HTMLInputElement>(null);
   const a = parseAmount(amount),
     r = parseRate(rate);
   const kzt = a * r;
-  const submit = () => {
+  const submit = async () => {
+    // Защита от дублей при многократном Enter, пока запись ещё не ушла —
+    // особенно важно для купли/продажи: дубль здесь портит курс и прибыль.
+    if (submitting) return;
     if (a <= 0 || r <= 0) return;
-    onAdd({ kind: "buy", currency, amount: a, rate: r });
-    setAmount("");
-    setRate("");
-    amountRef.current?.focus();
+    setSubmitting(true);
+    try {
+      await onAdd({ kind: "buy", currency, amount: a, rate: r });
+      setAmount("");
+      setRate("");
+      amountRef.current?.focus();
+    } finally {
+      setSubmitting(false);
+    }
   };
   return (
     <SectionCard
@@ -1648,7 +1668,7 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
           currency={currency}
           onEnterSubmit={submit}
         />
-        <Button onClick={submit} variant="destructive" className="gap-1">
+        <Button onClick={submit} disabled={submitting} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
       </div>
@@ -1667,18 +1687,25 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const rateRef = useRef<HTMLInputElement>(null);
   const a = parseAmount(amount),
     r = parseRate(rate);
   const kzt = a * r;
-  const submit = () => {
+  const submit = async () => {
+    if (submitting) return;
     if (a <= 0 || r <= 0) return;
-    onAdd({ kind: "sell", currency, amount: a, rate: r });
-    setAmount("");
-    setRate("");
-    amountRef.current?.focus();
+    setSubmitting(true);
+    try {
+      await onAdd({ kind: "sell", currency, amount: a, rate: r });
+      setAmount("");
+      setRate("");
+      amountRef.current?.focus();
+    } finally {
+      setSubmitting(false);
+    }
   };
   return (
     <SectionCard
@@ -1711,6 +1738,7 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         />
         <Button
           onClick={submit}
+          disabled={submitting}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
         >
           <Plus className="h-4 w-4" /> M+
@@ -1853,25 +1881,34 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: Co
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
   const [freeMode, setFreeMode] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
 
   const submit = async () => {
+    // Пока идёт запись (в т.ч. синхронизация с контактом) — игнорируем
+    // повторные Enter/клики, иначе одна и та же сумма уходит несколько раз.
+    if (submitting) return;
     const a = parseAmount(amount);
     const trimmed = name.trim();
     if (a <= 0) return;
     if (!freeMode && !trimmed) return;
-    await onAdd({
-      kind: "income",
-      currency,
-      amount: a,
-      name: trimmed || undefined,
-      expenseType: freeMode ? "regular" : "person",
-    });
-    setAmount("");
-    setName("");
-    nameRef.current?.focus();
+    setSubmitting(true);
+    try {
+      await onAdd({
+        kind: "income",
+        currency,
+        amount: a,
+        name: trimmed || undefined,
+        expenseType: freeMode ? "regular" : "person",
+      });
+      setAmount("");
+      setName("");
+      nameRef.current?.focus();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -1908,6 +1945,7 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: Co
         />
         <Button
           onClick={submit}
+          disabled={submitting}
           className="gap-1 bg-success text-success-foreground hover:bg-success/90"
         >
           <Plus className="h-4 w-4" /> M+
@@ -1943,6 +1981,7 @@ function ExpenseCombinedCard({
   const [freeMode, setFreeMode] = useState(false);
   const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0].code);
   const [otherNote, setOtherNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
@@ -1951,48 +1990,56 @@ function ExpenseCombinedCard({
   const isOther = category === "other";
 
   const submit = async () => {
+    // Защита от дублей при многократном Enter — без неё именно тут чаще
+    // всего плодились повторные списания.
+    if (submitting) return;
     const a = parseAmount(amount);
     if (a <= 0) return;
-    if (freeMode) {
-      // Невозвратный расход: фиксированная категория (Тамак/Айлык/Ага/Апше)
-      // или «Прочее» со свободным текстом. Всегда в тенге — это учитывается
-      // в «Калькуляторе дохода» как расход, уменьшающий чистую прибыль.
-      const label = isOther ? otherNote.trim() || "Прочее" : categoryLabel;
-      await onAdd({
-        kind: "expense",
-        currency: "KZT",
-        amount: a,
-        name: label,
-        expenseType: "regular",
-      });
-      setOtherNote("");
-    } else {
-      const trimmed = name.trim();
-      if (!trimmed) return;
-      // Подстраховка: если ввели ровно название категории (тамак/айлык/ага/
-      // апше), не переключив тумблер — не создаём фейковый контакт-должника,
-      // а записываем как невозвратный расход в тенге, как и было задумано.
-      if (matchesExpenseCategoryLabel(trimmed)) {
+    setSubmitting(true);
+    try {
+      if (freeMode) {
+        // Невозвратный расход: фиксированная категория (Тамак/Айлык/Ага/Апше)
+        // или «Прочее» со свободным текстом. Всегда в тенге — это учитывается
+        // в «Калькуляторе дохода» как расход, уменьшающий чистую прибыль.
+        const label = isOther ? otherNote.trim() || "Прочее" : categoryLabel;
         await onAdd({
           kind: "expense",
           currency: "KZT",
           amount: a,
-          name: trimmed,
+          name: label,
           expenseType: "regular",
         });
+        setOtherNote("");
       } else {
-        await onAdd({
-          kind: "expense",
-          currency,
-          amount: a,
-          name: trimmed,
-          expenseType: "person",
-        });
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        // Подстраховка: если ввели ровно название категории (тамак/айлык/ага/
+        // апше), не переключив тумблер — не создаём фейковый контакт-должника,
+        // а записываем как невозвратный расход в тенге, как и было задумано.
+        if (matchesExpenseCategoryLabel(trimmed)) {
+          await onAdd({
+            kind: "expense",
+            currency: "KZT",
+            amount: a,
+            name: trimmed,
+            expenseType: "regular",
+          });
+        } else {
+          await onAdd({
+            kind: "expense",
+            currency,
+            amount: a,
+            name: trimmed,
+            expenseType: "person",
+          });
+        }
+        setName("");
       }
-      setName("");
+      setAmount("");
+      (isOther ? nameRef : amountRef).current?.focus();
+    } finally {
+      setSubmitting(false);
     }
-    setAmount("");
-    (isOther ? nameRef : amountRef).current?.focus();
   };
 
   return (
@@ -2059,7 +2106,7 @@ function ExpenseCombinedCard({
           placeholder="Сумма"
           onEnterSubmit={submit}
         />
-        <Button onClick={submit} variant="destructive" className="gap-1">
+        <Button onClick={submit} disabled={submitting} variant="destructive" className="gap-1">
           <Minus className="h-4 w-4" /> M−
         </Button>
       </div>
