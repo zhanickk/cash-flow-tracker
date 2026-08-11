@@ -441,9 +441,14 @@ function Index() {
               toTs,
               expensesAll,
             );
+            const marginByCurrency: Record<string, number> = {};
+            for (const row of sessionIncome.byCurrency) {
+              marginByCurrency[row.currencyCode] = row.marginKzt;
+            }
             return {
               fxMarginKzt: sessionIncome.totalMarginKzt,
               expensesKzt: sessionIncome.totalExpensesKzt,
+              marginByCurrency,
             };
           })();
       const data = buildDailyReport(transactions, totals, weightedAvg);
@@ -1036,7 +1041,11 @@ function DailyReportDialog({
 
             {data.fxRows.some((r) => r.boughtAmount > 0 || r.soldAmount > 0) && (
               <div>
-                <h4 className="mb-2 text-sm font-semibold">Купля / продажа</h4>
+                <h4 className="mb-1 text-sm font-semibold">Купля / продажа</h4>
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  Куплено/Продано — только сегодняшние сделки. Маржа — по себестоимости (тот же
+                  метод, что и сумма сверху, учитывает остатки с прошлых дней).
+                </p>
                 <div className="overflow-x-auto rounded-md border border-border">
                   <table className="w-full text-xs">
                     <thead className="bg-accent">

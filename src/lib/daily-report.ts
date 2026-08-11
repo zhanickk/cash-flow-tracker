@@ -155,7 +155,19 @@ export function buildDailyReport(
    * посуточной — это отдельная, честная статистика «что произошло сегодня»,
    * а не про себестоимость.
    */
-  weightedAvg?: { fxMarginKzt: number; expensesKzt: number },
+  weightedAvg?: {
+    fxMarginKzt: number;
+    expensesKzt: number;
+    /** Маржа по себестоимости (weighted-average, тот же метод, что в
+     * «Калькуляторе дохода») для каждой валюты за текущую сессию — код
+     * валюты → маржа в тенге. Когда есть значение для валюты, подменяет
+     * посуточный matched-volume marginKzt в таблице «Купля/продажа» ниже,
+     * чтобы строки были согласованы с себестоимостью, а не только сумма
+     * сверху. Куплено/Продано/avgBuyRate/avgSellRate остаются посуточными —
+     * это честная статистика «что произошло сегодня».
+     */
+    marginByCurrency?: Record<string, number>;
+  },
 ): DailyReportData {
   const now = new Date();
   const opening: Record<Currency, number> = {
@@ -181,10 +193,12 @@ export function buildDailyReport(
     const avgBuyRate = boughtAmount > 0 ? buyKzt / boughtAmount : 0;
     const avgSellRate = soldAmount > 0 ? sellKzt / soldAmount : 0;
     const matchedAmount = Math.min(boughtAmount, soldAmount);
-    const marginKzt =
+    const matchedVolumeMarginKzt =
       matchedAmount > 0 && avgBuyRate > 0 && avgSellRate > 0
         ? matchedAmount * (avgSellRate - avgBuyRate)
         : 0;
+    const costBasisMarginKzt = weightedAvg?.marginByCurrency?.[currency];
+    const marginKzt = costBasisMarginKzt ?? matchedVolumeMarginKzt;
     return {
       currency,
       boughtAmount,
