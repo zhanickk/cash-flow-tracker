@@ -67,7 +67,10 @@ import {
   type DailyReportData,
 } from "@/lib/daily-report";
 import { buildSummaryReportWorkbook, summaryReportFileBaseName } from "@/lib/summary-report";
-import { EXPENSE_CATEGORIES, matchesExpenseCategoryLabel } from "@/lib/expenses";
+import { EXPENSE_CATEGORIES, matchesExpenseCategoryLabel, useExpenses } from "@/lib/expenses";
+import { useFxPurchases } from "@/lib/fx-purchases";
+import { useFxCurrencies, useFxSales, filtersToPeriodTs } from "@/lib/fx-sales";
+import { buildIncomeSummary } from "@/lib/income-calculator";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
 import { LogOut } from "lucide-react";
@@ -233,6 +236,12 @@ export const Route = createFileRoute("/")({
 function Index() {
   const { data: transactions = [] } = useCashTransactions();
   const { data: history = [] } = useCashHistory();
+  // Для «Чистая прибыль» в дневном отчёте — тот же метод средневзвешенной
+  // себестоимости, что и в «Калькуляторе дохода», чтобы цифры сходились.
+  const { data: fxPurchasesAll = [] } = useFxPurchases();
+  const { data: fxSalesAll = [] } = useFxSales();
+  const { data: expensesAll = [] } = useExpenses();
+  const { data: fxCurrenciesAll = [] } = useFxCurrencies();
   const addCashTx = useAddCashTransaction();
   const updateCashTx = useUpdateCashTransaction();
   const deleteCashTx = useDeleteCashTransaction();
@@ -404,7 +413,24 @@ function Index() {
   async function openDailyReport() {
     setReportBusy(true);
     try {
-      const data = buildDailyReport(transactions, totals);
+      const { fromTs, toTs } = filtersToPeriodTs({
+        period: "day",
+        dateFrom: "",
+        dateTo: "",
+        currencies: [],
+      });
+      const todayIncome = buildIncomeSummary(
+        fxPurchasesAll,
+        fxSalesAll,
+        fxCurrenciesAll,
+        fromTs,
+        toTs,
+        expensesAll,
+      );
+      const data = buildDailyReport(transactions, totals, {
+        fxMarginKzt: todayIncome.totalMarginKzt,
+        expensesKzt: todayIncome.totalExpensesKzt,
+      });
       const buffer = await buildReportWorkbook(data);
       setReportData(data);
       setReportExcel(buffer);
@@ -934,9 +960,14 @@ function DailyReportDialog({
           <div className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="rounded-lg border border-success/30 bg-success-soft p-3">
-                <div className="text-xs text-muted-foreground">Маржа обмена (KZT)</div>
+                <div className="text-xs text-muted-foreground">
+                  Маржа обмена (KZT, по себестоимости)
+                </div>
                 <div className="text-lg font-bold tabular-nums text-success">
                   {fmt(data.totalFxMarginKzt)} ₸
+                </div>
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  тот же метод, что в «Калькуляторе дохода» — числа должны сходиться
                 </div>
               </div>
               <div

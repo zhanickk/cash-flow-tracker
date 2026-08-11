@@ -146,6 +146,16 @@ function sumByCurrency(
 export function buildDailyReport(
   transactions: ReportTransaction[],
   closing: Record<Currency, number>,
+  /**
+   * Маржа обмена и расходы, посчитанные по средневзвешенной себестоимости
+   * (тот же метод, что в «Калькуляторе дохода», за сегодня) — если переданы,
+   * заменяют собой посуточный matched-volume расчёт margin/расходов в
+   * «Чистая прибыль», чтобы дневной отчёт и калькулятор дохода показывали
+   * согласованное число. Таблица «Купля/продажа» ниже всё равно остаётся
+   * посуточной — это отдельная, честная статистика «что произошло сегодня»,
+   * а не про себестоимость.
+   */
+  weightedAvg?: { fxMarginKzt: number; expensesKzt: number },
 ): DailyReportData {
   const now = new Date();
   const opening: Record<Currency, number> = {
@@ -189,7 +199,8 @@ export function buildDailyReport(
     };
   });
 
-  const totalFxMarginKzt = fxRows.reduce((s, r) => s + r.marginKzt, 0);
+  const matchedVolumeFxMarginKzt = fxRows.reduce((s, r) => s + r.marginKzt, 0);
+  const totalFxMarginKzt = weightedAvg?.fxMarginKzt ?? matchedVolumeFxMarginKzt;
   const incomeByCurrency = sumByCurrency(transactions, (t) => t.kind === "income");
   // "person"-tagged income is money deposited by/linked to a contact — it increases what we owe
   // them (a liability), not real business profit. Only free-note income (not linked to any
@@ -215,7 +226,7 @@ export function buildDailyReport(
   const incomeKzt = incomeByCurrency.KZT || 0;
   const regularIncomeKzt = regularIncomeByCurrency.KZT || 0;
   const personIncomeKzt = personIncomeByCurrency.KZT || 0;
-  const regularExpenseKzt = regularExpenseByCurrency.KZT || 0;
+  const regularExpenseKzt = weightedAvg?.expensesKzt ?? (regularExpenseByCurrency.KZT || 0);
   const personExpenseKzt = personExpenseByCurrency.KZT || 0;
   const netProfitKzt = totalFxMarginKzt + regularIncomeKzt - regularExpenseKzt;
   const buyRows = transactions.filter((t) => t.kind === "buy");
@@ -380,7 +391,7 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
     r++;
   };
 
-  addSummaryRow("Маржа обмена (KZT)", data.totalFxMarginKzt, "good");
+  addSummaryRow("Маржа обмена (KZT, по средневзвешенной себестоимости)", data.totalFxMarginKzt, "good");
   const usdFx = data.fxRows.find((x) => x.currency === "USD");
   if (usdFx && (usdFx.boughtAmount > 0 || usdFx.soldAmount > 0)) {
     addSummaryRow(
