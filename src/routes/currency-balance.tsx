@@ -404,8 +404,10 @@ function CurrencyBalancePage() {
   const { data, isLoading } = useCurrencyHoldings();
   const byCurrency = data?.peopleMoneySpendByCurrency ?? {};
   const codes = Object.keys(byCurrency).sort((a, b) => {
-    // USD и CNY (самые активные валюты по словам пользователя) — вперёд
-    const priority = (c: string) => (c === "USD" ? 0 : c === "CNY" ? 1 : 2);
+    // USD — самая активная валюта, всегда первая вкладка; дальше по алфавиту.
+    // (тенге как отдельной вкладки тут нет и быть не может — тенге это то, В ЧЁМ
+    // считается результат для любой валюты, а не сама торгуемая валюта)
+    const priority = (c: string) => (c === "USD" ? 0 : 1);
     const p = priority(a) - priority(b);
     return p !== 0 ? p : a.localeCompare(b);
   });
