@@ -238,10 +238,13 @@ function Index() {
   const { data: history = [] } = useCashHistory();
   // Для «Чистая прибыль» в дневном отчёте — тот же метод средневзвешенной
   // себестоимости, что и в «Калькуляторе дохода», чтобы цифры сходились.
-  const { data: fxPurchasesAll = [] } = useFxPurchases();
-  const { data: fxSalesAll = [] } = useFxSales();
-  const { data: expensesAll = [] } = useExpenses();
+  const { data: fxPurchasesAll = [], isLoading: fxPurchasesLoading } = useFxPurchases();
+  const { data: fxSalesAll = [], isLoading: fxSalesLoading } = useFxSales();
+  const { data: expensesAll = [], isLoading: expensesLoading } = useExpenses();
   const { data: fxCurrenciesAll = [] } = useFxCurrencies();
+  // Пока эти журналы ещё не загрузились, weightedAvg считать нельзя — иначе
+  // отчёт покажет 0 дохода вместо "подождите" (пустые массивы по умолчанию).
+  const weightedAvgDataLoading = fxPurchasesLoading || fxSalesLoading || expensesLoading;
   const addCashTx = useAddCashTransaction();
   const updateCashTx = useUpdateCashTransaction();
   const deleteCashTx = useDeleteCashTransaction();
@@ -419,18 +422,28 @@ function Index() {
         dateTo: "",
         currencies: [],
       });
-      const todayIncome = buildIncomeSummary(
-        fxPurchasesAll,
-        fxSalesAll,
-        fxCurrenciesAll,
-        fromTs,
-        toTs,
-        expensesAll,
-      );
-      const data = buildDailyReport(transactions, totals, {
-        fxMarginKzt: todayIncome.totalMarginKzt,
-        expensesKzt: todayIncome.totalExpensesKzt,
-      });
+      // Если журналы покупок/продаж/расходов ещё не подгрузились — не
+      // считаем margin по неполным (пустым) данным, это давало 0 в отчёте
+      // при живой кассе. Вместо этого отчёт просто использует старый
+      // посуточный расчёт (undefined = buildDailyReport сам посчитает как
+      // раньше), не показывая ложный ноль.
+      const weightedAvg = weightedAvgDataLoading
+        ? undefined
+        : (() => {
+            const todayIncome = buildIncomeSummary(
+              fxPurchasesAll,
+              fxSalesAll,
+              fxCurrenciesAll,
+              fromTs,
+              toTs,
+              expensesAll,
+            );
+            return {
+              fxMarginKzt: todayIncome.totalMarginKzt,
+              expensesKzt: todayIncome.totalExpensesKzt,
+            };
+          })();
+      const data = buildDailyReport(transactions, totals, weightedAvg);
       const buffer = await buildReportWorkbook(data);
       setReportData(data);
       setReportExcel(buffer);
