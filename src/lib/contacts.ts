@@ -195,6 +195,29 @@ export function useUpdateContactRate() {
   });
 }
 
+/** Переименование контакта — меняет только имя в профиле, все привязанные
+ * операции/балансы (в т.ч. по валютным счетам) остаются как есть, просто
+ * отображаются под новым именем. */
+export function useUpdateContactName() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ contactId, name }: { contactId: string; name: string }) => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("Имя не может быть пустым");
+      const { error } = await supabase
+        .from("contacts")
+        .update({ name: trimmed, updated_at: new Date().toISOString() })
+        .eq("id", contactId);
+      if (error) throw error;
+      return trimmed;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["contact-detail", vars.contactId] });
+      qc.invalidateQueries({ queryKey: ["contacts-with-balances"] });
+    },
+  });
+}
+
 export function useAddContactTransaction() {
   const qc = useQueryClient();
   return useMutation({

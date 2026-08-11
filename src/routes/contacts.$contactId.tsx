@@ -22,7 +22,9 @@ import {
   useContactDetail,
   useDeleteContactConversion,
   useDeleteContactTransaction,
+  useUpdateContactName,
 } from "@/lib/contacts";
+import { Pencil, Check, X } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import {
   AlertDialog,
@@ -69,6 +71,10 @@ function ContactDetailPage() {
   const { data: conversions = [] } = useContactConversions(contactId);
   const addConversion = useAddContactConversion();
   const deleteConversion = useDeleteContactConversion();
+  const updateName = useUpdateContactName();
+
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
 
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [opKind, setOpKind] = useState<"salynghan" | "karyz" | "repayment">("salynghan");
@@ -91,6 +97,23 @@ function ContactDetailPage() {
   }
 
   const { contact, transactions, balances, activeCurrencies } = data;
+
+  const startEditName = () => {
+    setNameDraft(contact.name);
+    setEditingName(true);
+  };
+  const cancelEditName = () => setEditingName(false);
+  const saveEditName = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === contact.name) {
+      setEditingName(false);
+      return;
+    }
+    updateName.mutate(
+      { contactId: contact.id, name: trimmed },
+      { onSuccess: () => setEditingName(false) },
+    );
+  };
 
   const visibleOps = showAllOps ? transactions : transactions.slice(0, OPS_PREVIEW);
   const hiddenOpsCount = Math.max(0, transactions.length - OPS_PREVIEW);
@@ -158,7 +181,54 @@ function ContactDetailPage() {
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-xs font-medium">
             {initials(contact.name)}
           </div>
-          <div className="text-lg font-semibold">{contact.name}</div>
+          {editingName ? (
+            <div className="flex flex-1 items-center gap-1">
+              <Input
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    saveEditName();
+                  } else if (e.key === "Escape") {
+                    cancelEditName();
+                  }
+                }}
+                className="h-8 text-base font-semibold"
+              />
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 shrink-0 text-success"
+                onClick={saveEditName}
+                disabled={updateName.isPending}
+              >
+                <Check className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 shrink-0 text-muted-foreground"
+                onClick={cancelEditName}
+                disabled={updateName.isPending}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center gap-1.5">
+              <div className="text-lg font-semibold">{contact.name}</div>
+              <button
+                type="button"
+                onClick={startEditName}
+                title="Изменить имя контакта"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

@@ -1390,13 +1390,27 @@ interface RowProps {
   onUpdate: (id: string, patch: Partial<Transaction>) => void | Promise<void>;
   onDelete: (id: string) => void;
   withRate?: boolean;
+  /** Как withRate, но курс необязателен при сохранении — для "Остатка"
+   * (курс — это только вручную заданная себестоимость, не обязательная). */
+  optionalRate?: boolean;
   withName?: boolean;
   lockName?: boolean;
   excludeKzt?: boolean;
   contactMap?: Map<string, ContactWithBalance>;
 }
 
-function TxRow({ tx, onUpdate, onDelete, withRate, withName, lockName, excludeKzt, contactMap }: RowProps) {
+function TxRow({
+  tx,
+  onUpdate,
+  onDelete,
+  withRate,
+  optionalRate,
+  withName,
+  lockName,
+  excludeKzt,
+  contactMap,
+}: RowProps) {
+  const showRate = withRate || optionalRate;
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(tx.name ?? "");
   const [currency, setCurrency] = useState<Currency>(tx.currency);
@@ -1420,7 +1434,7 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, lockName, excludeKz
       name: withName && !lockName ? name.trim() || undefined : tx.name,
       currency,
       amount: a,
-      rate: withRate ? r : undefined,
+      rate: withRate ? r : optionalRate ? (r > 0 ? r : undefined) : undefined,
     });
     setEditing(false);
   };
@@ -1457,9 +1471,9 @@ function TxRow({ tx, onUpdate, onDelete, withRate, withName, lockName, excludeKz
             onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
             exclude={excludeKzt ? ["KZT"] : []}
             triggerRef={currencyRef}
-            onEnterNext={withRate ? () => rateRef.current?.focus() : save}
+            onEnterNext={showRate ? () => rateRef.current?.focus() : save}
           />
-          {withRate && (
+          {showRate && (
             <RateInput
               ref={rateRef}
               value={rate}
@@ -1612,9 +1626,12 @@ interface AddProps {
 function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
+  const [rate, setRate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const amountRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
+  const rateRef = useRef<HTMLInputElement>(null);
+  const isForeign = currency !== "KZT";
   const submit = async () => {
     // Защита от повторного срабатывания, если несколько раз подряд нажать
     // Enter/кнопку, пока предыдущая операция ещё не завершилась — иначе
@@ -1622,10 +1639,12 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
     if (submitting) return;
     const a = parseAmount(amount);
     if (a <= 0) return;
+    const r = isForeign ? parseRate(rate) : 0;
     setSubmitting(true);
     try {
-      await onAdd({ kind: "opening", currency, amount: a });
+      await onAdd({ kind: "opening", currency, amount: a, rate: r > 0 ? r : undefined });
       setAmount("");
+      setRate("");
       amountRef.current?.focus();
     } finally {
       setSubmitting(false);
@@ -1633,7 +1652,12 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   };
   return (
     <SectionCard title="Остаток на начало дня" icon={Wallet} tone="primary" badge={`${txs.length}`}>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+      <div
+        className={cn(
+          "grid grid-cols-1 gap-2",
+          isForeign ? "sm:grid-cols-[1fr_1fr_1fr_auto]" : "sm:grid-cols-[1fr_1fr_auto]",
+        )}
+      >
         <AmountInput
           ref={amountRef}
           value={amount}
@@ -1643,10 +1667,19 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         />
         <CurrencySelect
           value={currency}
-          onChange={setCurrency}
+          onChange={(c) => onCurrencyChange(c, setCurrency, setRate)}
           triggerRef={currencyRef}
-          onEnterNext={submit}
+          onEnterNext={() => (isForeign ? rateRef.current?.focus() : submit())}
         />
+        {isForeign && (
+          <RateInput
+            ref={rateRef}
+            value={rate}
+            onChange={setRate}
+            currency={currency}
+            onEnterSubmit={submit}
+          />
+        )}
         <Button
           onClick={submit}
           disabled={submitting}
@@ -1655,7 +1688,14 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
           <Plus className="h-4 w-4" /> Добавить
         </Button>
       </div>
-      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName />
+      {isForeign && (
+        <p className="text-[11px] text-muted-foreground">
+          Курс необязателен, но если знаете себестоимость этого остатка — впишите: тогда он
+          будет учтён в «Калькуляторе дохода» и дневном отчёте как реальная покупка, а не «без
+          себестоимости» (0 маржи при продаже).
+        </p>
+      )}
+      <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName optionalRate />
     </SectionCard>
   );
 }

@@ -63,7 +63,13 @@ export async function recordFxPurchase(input: {
   return data.id;
 }
 
-/** Синхронизация покупки из кассы → журнал fx_purchases (создание). */
+/** Синхронизация покупки из кассы → журнал fx_purchases (создание).
+ * Помимо обычной покупки (kind="buy"), сюда же попадает "Остаток на начало
+ * дня" (kind="opening") для не-KZT валют — если при вводе остатка указан
+ * курс себестоимости. Без курса такой остаток не хранит себестоимость нигде
+ * (это и была причина, почему золото/юань из утреннего остатка считались
+ * "без покупки" в Калькуляторе дохода — ноль маржи по ним, пока не задали
+ * курс вручную). Это устраняет проблему на будущее, автоматически. */
 export async function syncFxPurchaseFromCashTx(tx: {
   id: string;
   kind: string;
@@ -73,7 +79,8 @@ export async function syncFxPurchaseFromCashTx(tx: {
   name?: string | null;
   ts: string | number;
 }) {
-  if (tx.kind !== "buy") return;
+  if (tx.kind !== "buy" && tx.kind !== "opening") return;
+  if (tx.currency === "KZT") return;
   const { data: existing } = await supabase
     .from("fx_purchases")
     .select("id")
@@ -106,7 +113,7 @@ export async function syncFxPurchaseUpdateFromCashTx(
     ts?: string | number;
   },
 ) {
-  if (merged.kind !== "buy") {
+  if ((merged.kind !== "buy" && merged.kind !== "opening") || merged.currency === "KZT") {
     await syncFxPurchaseDeleteFromCashTx(cashTxId);
     return;
   }

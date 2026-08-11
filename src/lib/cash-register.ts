@@ -169,7 +169,9 @@ export function useAddCashTransaction() {
           ts: occurredAt,
         });
       }
-      if (tx.kind === "buy" && tx.rate) {
+      if ((tx.kind === "buy" || tx.kind === "opening") && tx.rate) {
+        // "opening" (Остаток) с указанным курсом — тоже даёт себестоимость
+        // на будущее в Калькуляторе дохода/дневном отчёте.
         await syncFxPurchaseFromCashTx({
           id: tx.id,
           kind: tx.kind,
@@ -246,7 +248,7 @@ export function useUpdateCashTransaction() {
           ts: merged.ts,
         });
       }
-      if (old.kind === "buy" || merged.kind === "buy") {
+      if (["buy", "opening"].includes(old.kind) || ["buy", "opening"].includes(merged.kind)) {
         await syncFxPurchaseUpdateFromCashTx(id, {
           kind: merged.kind,
           currency: merged.currency,
@@ -306,7 +308,7 @@ export function useDeleteCashTransaction() {
       if (old.kind === "sell") {
         await syncFxSaleDeleteFromCashTx(old.id);
       }
-      if (old.kind === "buy") {
+      if (old.kind === "buy" || old.kind === "opening") {
         await syncFxPurchaseDeleteFromCashTx(old.id);
       }
       if (old.kind === "expense") {
