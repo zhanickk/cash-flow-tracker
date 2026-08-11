@@ -647,12 +647,6 @@ function Index() {
           contacts={contactsWithBalances}
           contactMap={contactMap}
         />
-        <ExpenseCategoryCard
-          txs={transactions.filter((t) => t.kind === "expense" && t.expenseType !== "person")}
-          onAdd={addContactLinkedTx}
-          onUpdate={updateTx}
-          onDelete={deleteTx}
-        />
         <ExpensePersonCard
           txs={transactions.filter((t) => t.kind === "expense" && t.expenseType === "person")}
           onAdd={addContactLinkedTx}
@@ -661,6 +655,14 @@ function Index() {
           contacts={contactsWithBalances}
           contactMap={contactMap}
         />
+        <div className="lg:col-span-2">
+          <ExpenseCategoryCard
+            txs={transactions.filter((t) => t.kind === "expense" && t.expenseType !== "person")}
+            onAdd={addContactLinkedTx}
+            onUpdate={updateTx}
+            onDelete={deleteTx}
+          />
+        </div>
 
         {/* History */}
         <div className="lg:col-span-2">
