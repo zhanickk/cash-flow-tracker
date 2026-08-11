@@ -13,8 +13,8 @@ import {
 } from "@/lib/fx-pots";
 import { cashRowsToMappedSales } from "@/lib/fx-sale-map";
 import {
-  cashRowsToUsdFxOps,
-  computePeopleMoneySpend,
+  cashRowsToFxOps,
+  computePeopleMoneySpendByCurrency,
   type PeopleMoneySpendReport,
 } from "@/lib/fx-people-money-spend";
 
@@ -176,13 +176,16 @@ export function useCurrencyHoldings() {
       contactTxs: ContactTx[];
       currencies: Tables<"fx_currencies">[];
       usdReplay: ReturnType<typeof replayUsdSales>;
-      peopleMoneySpend: PeopleMoneySpendReport;
+      /** Отчёт «Трата Жұрттың ақшасы» по каждой иностранной валюте, ключ — код валюты. */
+      peopleMoneySpendByCurrency: Record<string, PeopleMoneySpendReport>;
+      /** @deprecated используйте peopleMoneySpendByCurrency["USD"] */
+      peopleMoneySpend: PeopleMoneySpendReport | undefined;
     }> => {
       const [
         { data: currencies, error: cErr },
         contactTxs,
         { data: sellRows, error: tErr },
-        { data: usdFxRows, error: uErr },
+        { data: fxRows, error: uErr },
       ] = await Promise.all([
         supabase.from("fx_currencies").select("*").eq("is_active", true).order("sort_order"),
         fetchAllRows((from, to) => supabase.from("contact_transactions").select("*").range(from, to)),
@@ -190,7 +193,7 @@ export function useCurrencyHoldings() {
         supabase
           .from("cash_transactions")
           .select("*")
-          .eq("currency", "USD")
+          .neq("currency", "KZT")
           .in("kind", ["buy", "sell"])
           .order("ts", { ascending: false }),
       ]);
@@ -199,7 +202,9 @@ export function useCurrencyHoldings() {
       if (uErr) throw uErr;
 
       const sales = cashRowsToMappedSales(sellRows ?? []);
-      const peopleMoneySpend = computePeopleMoneySpend(cashRowsToUsdFxOps(usdFxRows ?? []));
+      const peopleMoneySpendByCurrency = computePeopleMoneySpendByCurrency(
+        cashRowsToFxOps(fxRows ?? []),
+      );
 
       return {
         cards: buildHoldingCards(currencies ?? [], (contactTxs ?? []) as ContactTx[], sales),
@@ -207,7 +212,8 @@ export function useCurrencyHoldings() {
         contactTxs: (contactTxs ?? []) as ContactTx[],
         currencies: currencies ?? [],
         usdReplay: replayUsdSales((contactTxs ?? []) as ContactTx[], sales),
-        peopleMoneySpend,
+        peopleMoneySpendByCurrency,
+        peopleMoneySpend: peopleMoneySpendByCurrency["USD"],
       };
     },
   });
