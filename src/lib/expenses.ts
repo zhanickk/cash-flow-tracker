@@ -11,12 +11,17 @@ type ExpenseRow = Tables<"expenses">;
  * возврата). «other» — свободный текст в note, когда ни одна категория
  * не подходит. */
 export const EXPENSE_CATEGORIES = [
+  { code: "aga", label: "Ауез ага" },
+  { code: "apshe", label: "Куралай апше" },
   { code: "tamak", label: "Тамак" },
-  { code: "aylyk", label: "Айлык" },
-  { code: "aga", label: "Ага" },
-  { code: "apshe", label: "Апше" },
+  { code: "aylyk", label: "Зарплаты" },
   { code: "other", label: "Прочее" },
 ] as const;
+
+/** Категория «Зарплаты» — код зарезервирован под платежи из модуля payroll
+ * (у каждого сотрудника своя ставка и день выплаты), а не под свободный ввод
+ * суммы, как остальные категории. */
+export const PAYROLL_CATEGORY_CODE = "aylyk";
 
 export type ExpenseCategoryCode = (typeof EXPENSE_CATEGORIES)[number]["code"];
 
@@ -90,13 +95,26 @@ export async function recordExpense(input: {
   return data.id;
 }
 
-/** По свободному тексту из карточки «Расходы» (freeMode) определяет
- * категорию: если текст совпадает с одной из фиксированных меток —
- * берём её код, иначе это «Прочее» с этим текстом в note. */
-function resolveCategory(name: string | null | undefined): { category: string; note: string | null } {
+/** По свободному тексту из карточки «Расходы» определяет категорию:
+ * 1) текст целиком совпадает с одной из фиксированных меток — берём её код,
+ *    note пустой (например, просто «Тамак»);
+ * 2) текст в формате "Метка: остальное" (например, «Зарплаты: Ауез» — так
+ *    пишет модуль зарплат для конкретного сотрудника) — берём код
+ *    метки-префикса, а note = то, что после двоеточия (имя сотрудника);
+ * 3) иначе — «Прочее» с этим текстом целиком в note.
+ */
+export function resolveCategory(name: string | null | undefined): { category: string; note: string | null } {
   const trimmed = (name ?? "").trim();
   const code = CATEGORY_CODE_BY_LABEL.get(trimmed.toLowerCase());
   if (code) return { category: code, note: null };
+  const colonIdx = trimmed.indexOf(":");
+  if (colonIdx > 0) {
+    const prefix = trimmed.slice(0, colonIdx).trim().toLowerCase();
+    const prefixCode = CATEGORY_CODE_BY_LABEL.get(prefix);
+    if (prefixCode) {
+      return { category: prefixCode, note: trimmed.slice(colonIdx + 1).trim() || null };
+    }
+  }
   return { category: "other", note: trimmed || null };
 }
 

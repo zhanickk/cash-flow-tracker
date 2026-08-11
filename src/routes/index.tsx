@@ -56,6 +56,8 @@ import {
   Link2Off,
   ExternalLink,
   ArrowLeftRight,
+  ChevronDown,
+  CalendarClock,
 } from "lucide-react";
 import {
   buildDailyReport,
@@ -67,7 +69,21 @@ import {
   type DailyReportData,
 } from "@/lib/daily-report";
 import { buildSummaryReportWorkbook, summaryReportFileBaseName } from "@/lib/summary-report";
-import { EXPENSE_CATEGORIES, matchesExpenseCategoryLabel, useExpenses } from "@/lib/expenses";
+import {
+  EXPENSE_CATEGORIES,
+  PAYROLL_CATEGORY_CODE,
+  expenseCategoryLabel,
+  matchesExpenseCategoryLabel,
+  resolveCategory,
+  useExpenses,
+} from "@/lib/expenses";
+import {
+  isPaidThisMonth,
+  useAddEmployee,
+  useDeleteEmployee,
+  useEmployees,
+  type Employee,
+} from "@/lib/payroll";
 import { useFxPurchases } from "@/lib/fx-purchases";
 import { useFxCurrencies, useFxSales, filtersToPeriodTs } from "@/lib/fx-sales";
 import { buildIncomeSummary } from "@/lib/income-calculator";
@@ -612,8 +628,14 @@ function Index() {
           contacts={contactsWithBalances}
           contactMap={contactMap}
         />
-        <ExpenseCombinedCard
-          txs={transactions.filter((t) => t.kind === "expense")}
+        <ExpenseCategoryCard
+          txs={transactions.filter((t) => t.kind === "expense" && t.expenseType !== "person")}
+          onAdd={addContactLinkedTx}
+          onUpdate={updateTx}
+          onDelete={deleteTx}
+        />
+        <ExpensePersonCard
+          txs={transactions.filter((t) => t.kind === "expense" && t.expenseType === "person")}
           onAdd={addContactLinkedTx}
           onUpdate={updateTx}
           onDelete={deleteTx}
@@ -1623,6 +1645,177 @@ function TxList({ txs, ...props }: { txs: Transaction[] } & Omit<RowProps, "tx">
   );
 }
 
+/** Итог по каждой валюте модуля: сумма + средневзвешенный курс (только по
+ * записям, где курс указан). Показывается снизу каждой карточки кассы. */
+function CurrencyTotalsFooter({
+  txs,
+  withRate = true,
+}: {
+  txs: Transaction[];
+  withRate?: boolean;
+}) {
+  if (txs.length === 0) return null;
+  const byCurrency = new Map<string, { amount: number; ratedKzt: number; ratedAmount: number }>();
+  for (const t of txs) {
+    const cur = byCurrency.get(t.currency) ?? { amount: 0, ratedKzt: 0, ratedAmount: 0 };
+    cur.amount += t.amount;
+    if (t.rate && t.rate > 0) {
+      cur.ratedKzt += t.amount * t.rate;
+      cur.ratedAmount += t.amount;
+    }
+    byCurrency.set(t.currency, cur);
+  }
+  const entries = [...byCurrency.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs">
+      {entries.map(([currency, v]) => (
+        <span key={currency} className="tabular-nums">
+          <span className="font-semibold">{currency}:</span> {fmt(v.amount)}
+          {withRate && v.ratedAmount > 0 && (
+            <span className="text-muted-foreground">
+              {" "}
+              @ ср. {fmt(v.ratedKzt / v.ratedAmount, 4)}
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Группирует контакт-привязанные транзакции (Приход / Расход-выдача) по
+ * имени: строка человека сворачивается в сумму, разворачивается по клику —
+ * иначе список превращается в мессиво отдельных платежей. Записи без имени
+ * (свободные заметки, freeMode) остаются отдельным плоским списком снизу.
+ * Раскрытая группа — это те же TxRow, что и раньше: правки/удаление работают
+ * как и прежде, просто спрятаны за клик по человеку. */
+function GroupedTxList({
+  txs,
+  onUpdate,
+  onDelete,
+  contactMap,
+}: {
+  txs: Transaction[];
+  onUpdate: RowProps["onUpdate"];
+  onDelete: RowProps["onDelete"];
+  contactMap?: Map<string, ContactWithBalance>;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  if (txs.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+        Записей пока нет
+      </div>
+    );
+  }
+
+  const groups = new Map<string, { displayName: string; txs: Transaction[] }>();
+  const flat: Transaction[] = [];
+  for (const t of txs) {
+    const key = t.name?.trim();
+    if (!key) {
+      flat.push(t);
+      continue;
+    }
+    const groupKey = key.toLowerCase();
+    const g = groups.get(groupKey) ?? { displayName: key, txs: [] };
+    g.txs.push(t);
+    groups.set(groupKey, g);
+  }
+  const groupList = [...groups.entries()].sort(
+    ([, a], [, b]) => Math.max(...b.txs.map((t) => t.ts)) - Math.max(...a.txs.map((t) => t.ts)),
+  );
+
+  const toggle = (key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  return (
+    <div className="max-h-80 space-y-1.5 overflow-y-auto rounded-md border border-border bg-muted/30 p-1.5">
+      {groupList.map(([key, g]) => {
+        const totals = new Map<string, number>();
+        for (const t of g.txs) totals.set(t.currency, (totals.get(t.currency) ?? 0) + t.amount);
+        const isOpen = expanded.has(key);
+        const contact = contactMap?.get(key);
+        return (
+          <div key={key} className="overflow-hidden rounded-md border border-border/60 bg-card">
+            <button
+              type="button"
+              onClick={() => toggle(key)}
+              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs hover:bg-accent/40"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                    !isOpen && "-rotate-90",
+                  )}
+                />
+                <span className={cn("truncate font-medium", contact && "text-primary")}>
+                  {g.displayName}
+                </span>
+                <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {g.txs.length}
+                </span>
+              </span>
+              <span className="shrink-0 tabular-nums font-semibold">
+                {[...totals.entries()].map(([cur, amt]) => `${fmt(amt)} ${cur}`).join(" · ")}
+              </span>
+            </button>
+            {isOpen && (
+              <div className="border-t border-border/60">
+                <ul className="divide-y divide-border">
+                  {[...g.txs]
+                    .sort((a, b) => b.ts - a.ts)
+                    .map((t) => (
+                      <TxRow
+                        key={t.id}
+                        tx={t}
+                        onUpdate={onUpdate}
+                        onDelete={onDelete}
+                        withName
+                        lockName
+                        contactMap={contactMap}
+                      />
+                    ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {flat.length > 0 && (
+        <div className="pt-1">
+          <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Без привязки
+          </div>
+          <ul className="divide-y divide-border rounded-md border border-border/60 bg-card">
+            {[...flat]
+              .sort((a, b) => b.ts - a.ts)
+              .map((t) => (
+                <TxRow
+                  key={t.id}
+                  tx={t}
+                  onUpdate={onUpdate}
+                  onDelete={onDelete}
+                  withName
+                  lockName
+                  contactMap={contactMap}
+                />
+              ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============== Quadrants ============== */
 
 interface AddProps {
@@ -1705,6 +1898,7 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         </p>
       )}
       <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withName optionalRate />
+      <CurrencyTotalsFooter txs={txs} />
     </SectionCard>
   );
 }
@@ -1775,6 +1969,7 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         </div>
       )}
       <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withRate excludeKzt />
+      <CurrencyTotalsFooter txs={txs} />
     </SectionCard>
   );
 }
@@ -1847,6 +2042,7 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
         </div>
       )}
       <TxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} withRate excludeKzt />
+      <CurrencyTotalsFooter txs={txs} />
     </SectionCard>
   );
 }
@@ -2051,19 +2247,301 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: Co
         Значок слева переключает: привязка к контакту (автоподсказка + баланс при наведении,
         обновляет профиль в Контактах) или просто заметка без привязки.
       </p>
-      <TxList
-        txs={txs}
-        onUpdate={onUpdate}
-        onDelete={onDelete}
-        withName
-        lockName
-        contactMap={contactMap}
-      />
+      <GroupedTxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} contactMap={contactMap} />
+      <CurrencyTotalsFooter txs={txs} />
     </SectionCard>
   );
 }
 
-function ExpenseCombinedCard({
+interface ExpenseCategoryProps {
+  txs: Transaction[];
+  onAdd: (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => void | Promise<void>;
+  onUpdate: (id: string, patch: Partial<Transaction>) => void | Promise<void>;
+  onDelete: (id: string) => void;
+}
+
+/** Модуль невозвратных расходов по 5 фиксированным направлениям. Категория
+ * «Зарплаты» вместо суммы открывает мини-модуль зарплат (см. PayrollPanel) —
+ * там у каждого сотрудника своя ставка и день выплаты. */
+function ExpenseCategoryCard({ txs, onAdd, onUpdate, onDelete }: ExpenseCategoryProps) {
+  const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0].code);
+  const [amount, setAmount] = useState("");
+  const [otherNote, setOtherNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const amountRef = useRef<HTMLInputElement>(null);
+  const otherRef = useRef<HTMLInputElement>(null);
+
+  const categoryMeta = EXPENSE_CATEGORIES.find((c) => c.code === category) ?? EXPENSE_CATEGORIES[0];
+  const isOther = category === "other";
+  const isPayroll = category === PAYROLL_CATEGORY_CODE;
+
+  const submit = async () => {
+    if (submitting) return;
+    const a = parseAmount(amount);
+    if (a <= 0) return;
+    setSubmitting(true);
+    try {
+      const label = isOther ? otherNote.trim() || "Прочее" : categoryMeta.label;
+      await onAdd({ kind: "expense", currency: "KZT", amount: a, name: label, expenseType: "regular" });
+      setAmount("");
+      setOtherNote("");
+      (isOther ? otherRef : amountRef).current?.focus();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const categoryTxs = txs.filter((t) => resolveCategory(t.name).category === category);
+
+  return (
+    <SectionCard
+      title="Расходы (невозвратные)"
+      icon={ArrowDownCircle}
+      tone="danger"
+      badge={`${txs.length}`}
+    >
+      <div className="flex flex-wrap gap-1.5">
+        {EXPENSE_CATEGORIES.map((c) => (
+          <button
+            key={c.code}
+            type="button"
+            onClick={() => setCategory(c.code)}
+            className={cn(
+              "rounded-full border px-3 py-1.5 text-xs font-medium transition",
+              c.code === category
+                ? "border-danger bg-danger-soft text-danger"
+                : "border-input text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      {isPayroll ? (
+        <PayrollPanel onAdd={onAdd} />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+            <AmountInput
+              ref={amountRef}
+              value={amount}
+              onChange={setAmount}
+              placeholder={`Сумма (${categoryMeta.label})`}
+              onEnterNext={isOther ? () => otherRef.current?.focus() : undefined}
+              onEnterSubmit={isOther ? undefined : submit}
+            />
+            <Button onClick={submit} disabled={submitting} variant="destructive" className="gap-1">
+              <Minus className="h-4 w-4" /> M−
+            </Button>
+          </div>
+          {isOther && (
+            <Input
+              ref={otherRef}
+              placeholder="Описание расхода (категория «Прочее»)"
+              value={otherNote}
+              onChange={(e) => setOtherNote(e.target.value)}
+              onKeyDown={(e) => handleEnterKey(e, submit)}
+            />
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Всегда в тенге — учитывается в «Калькуляторе дохода» как расход, уменьшающий чистую
+            прибыль, и не создаёт баланс контакта.
+          </p>
+          <TxList txs={categoryTxs} onUpdate={onUpdate} onDelete={onDelete} />
+          <CurrencyTotalsFooter txs={categoryTxs} withRate={false} />
+        </>
+      )}
+    </SectionCard>
+  );
+}
+
+/** Зарплаты по сотрудникам: у каждого своя ставка и день выплаты в месяце.
+ * "Выплачено"/"Не выплачено" — по наличию записи в расходах категории
+ * «Зарплаты» с note = имя сотрудника за текущий календарный месяц. */
+function PayrollPanel({ onAdd }: { onAdd: ExpenseCategoryProps["onAdd"] }) {
+  const { data: employees = [], isLoading } = useEmployees();
+  const { data: expensesAll = [] } = useExpenses();
+  const addEmployee = useAddEmployee();
+  const deleteEmployee = useDeleteEmployee();
+
+  const [newName, setNewName] = useState("");
+  const [newSalary, setNewSalary] = useState("");
+  const [newPayday, setNewPayday] = useState("5");
+  const [addingEmployee, setAddingEmployee] = useState(false);
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [payAmount, setPayAmount] = useState("");
+  const [paySubmitting, setPaySubmitting] = useState(false);
+
+  const activeEmployees = employees.filter((e) => e.isActive);
+
+  const startPay = (emp: Employee) => {
+    setPayingId(emp.id);
+    setPayAmount(fmt(emp.salaryKzt));
+  };
+
+  const confirmPay = async (emp: Employee) => {
+    if (paySubmitting) return;
+    const a = parseAmount(payAmount);
+    if (a <= 0) return;
+    setPaySubmitting(true);
+    try {
+      await onAdd({
+        kind: "expense",
+        currency: "KZT",
+        amount: a,
+        name: `${expenseCategoryLabel(PAYROLL_CATEGORY_CODE)}: ${emp.name}`,
+        expenseType: "regular",
+      });
+      setPayingId(null);
+      setPayAmount("");
+    } finally {
+      setPaySubmitting(false);
+    }
+  };
+
+  const addEmployeeSubmit = async () => {
+    if (addingEmployee) return;
+    const name = newName.trim();
+    const salary = parseAmount(newSalary);
+    const payday = Math.min(31, Math.max(1, parseInt(newPayday, 10) || 1));
+    if (!name || salary <= 0) return;
+    setAddingEmployee(true);
+    try {
+      await addEmployee.mutateAsync({ name, salaryKzt: salary, payday });
+      setNewName("");
+      setNewSalary("");
+      setNewPayday("5");
+    } finally {
+      setAddingEmployee(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {isLoading && <p className="text-xs text-muted-foreground">Загрузка сотрудников…</p>}
+      {!isLoading && activeEmployees.length === 0 && (
+        <p className="text-xs text-muted-foreground">Сотрудников пока нет — добавьте ниже.</p>
+      )}
+      <ul className="space-y-1.5">
+        {activeEmployees.map((emp) => {
+          const paid = isPaidThisMonth(expensesAll, emp.name);
+          return (
+            <li key={emp.id} className="rounded-md border border-border bg-card p-2.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{emp.name}</div>
+                  <div className="flex items-center gap-1 text-muted-foreground">
+                    <CalendarClock className="h-3 w-3" /> {emp.payday}-е число · {fmt(emp.salaryKzt)} ₸
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                      paid ? "bg-success-soft text-success" : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {paid ? "Выплачено" : "Не выплачено"}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1 px-2 text-[11px]"
+                    onClick={() => startPay(emp)}
+                  >
+                    Выплатить
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button size="icon" variant="ghost" className="h-7 w-7 text-danger hover:text-danger">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Удалить сотрудника «{emp.name}»?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          История уже сделанных выплат в расходах останется — удалится только
+                          карточка сотрудника из этого списка.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Отмена</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => deleteEmployee.mutate(emp.id)}
+                          className={buttonVariants({ variant: "destructive" })}
+                        >
+                          Удалить
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              </div>
+              {payingId === emp.id && (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <AmountInput
+                    value={payAmount}
+                    onChange={setPayAmount}
+                    placeholder="Сумма"
+                    className="h-8 text-xs"
+                    onEnterSubmit={() => confirmPay(emp)}
+                  />
+                  <Button
+                    size="sm"
+                    disabled={paySubmitting}
+                    className="h-8 gap-1 bg-danger text-danger-foreground hover:bg-danger/90"
+                    onClick={() => confirmPay(emp)}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-8" onClick={() => setPayingId(null)}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="rounded-md border border-dashed border-border p-2.5">
+        <div className="mb-2 text-[11px] font-medium text-muted-foreground">Добавить сотрудника</div>
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[1fr_1fr_80px_auto]">
+          <Input
+            placeholder="Имя"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            className="h-8 text-xs"
+          />
+          <AmountInput
+            value={newSalary}
+            onChange={setNewSalary}
+            placeholder="Оклад ₸"
+            className="h-8 text-xs"
+          />
+          <Input
+            type="number"
+            min={1}
+            max={31}
+            placeholder="День"
+            value={newPayday}
+            onChange={(e) => setNewPayday(e.target.value)}
+            className="h-8 text-xs"
+          />
+          <Button size="sm" disabled={addingEmployee} className="h-8 gap-1" onClick={addEmployeeSubmit}>
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Выдача денег конкретному контакту (создаёт его долг) — отдельно от
+ * невозвратных расходов по категориям, которые теперь в ExpenseCategoryCard. */
+function ExpensePersonCard({
   txs,
   onAdd,
   onUpdate,
@@ -2074,65 +2552,43 @@ function ExpenseCombinedCard({
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
-  const [freeMode, setFreeMode] = useState(false);
-  const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0].code);
-  const [otherNote, setOtherNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
-
-  const categoryLabel = EXPENSE_CATEGORIES.find((c) => c.code === category)?.label ?? "";
-  const isOther = category === "other";
 
   const submit = async () => {
     // Защита от дублей при многократном Enter — без неё именно тут чаще
     // всего плодились повторные списания.
     if (submitting) return;
     const a = parseAmount(amount);
-    if (a <= 0) return;
+    const trimmed = name.trim();
+    if (a <= 0 || !trimmed) return;
     setSubmitting(true);
     try {
-      if (freeMode) {
-        // Невозвратный расход: фиксированная категория (Тамак/Айлык/Ага/Апше)
-        // или «Прочее» со свободным текстом. Всегда в тенге — это учитывается
-        // в «Калькуляторе дохода» как расход, уменьшающий чистую прибыль.
-        const label = isOther ? otherNote.trim() || "Прочее" : categoryLabel;
+      // Подстраховка: если ввели ровно название категории расхода (тамак/
+      // зарплаты/ауез ага/куралай апше), не создаём фейковый контакт-должника,
+      // а записываем как невозвратный расход, как и было задумано.
+      if (matchesExpenseCategoryLabel(trimmed)) {
         await onAdd({
           kind: "expense",
           currency: "KZT",
           amount: a,
-          name: label,
+          name: trimmed,
           expenseType: "regular",
         });
-        setOtherNote("");
       } else {
-        const trimmed = name.trim();
-        if (!trimmed) return;
-        // Подстраховка: если ввели ровно название категории (тамак/айлык/ага/
-        // апше), не переключив тумблер — не создаём фейковый контакт-должника,
-        // а записываем как невозвратный расход в тенге, как и было задумано.
-        if (matchesExpenseCategoryLabel(trimmed)) {
-          await onAdd({
-            kind: "expense",
-            currency: "KZT",
-            amount: a,
-            name: trimmed,
-            expenseType: "regular",
-          });
-        } else {
-          await onAdd({
-            kind: "expense",
-            currency,
-            amount: a,
-            name: trimmed,
-            expenseType: "person",
-          });
-        }
-        setName("");
+        await onAdd({
+          kind: "expense",
+          currency,
+          amount: a,
+          name: trimmed,
+          expenseType: "person",
+        });
       }
+      setName("");
       setAmount("");
-      (isOther ? nameRef : amountRef).current?.focus();
+      amountRef.current?.focus();
     } finally {
       setSubmitting(false);
     }
@@ -2140,61 +2596,27 @@ function ExpenseCombinedCard({
 
   return (
     <SectionCard
-      title="Расходы / Отток денег"
+      title="Расход (выдача контакту)"
       icon={ArrowDownCircle}
       tone="danger"
       badge={`${txs.length}`}
     >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_1fr_1fr_auto]">
-        <button
-          type="button"
-          aria-label={freeMode ? "Режим: невозвратный расход" : "Режим: контакт"}
-          title={
-            freeMode
-              ? "Невозвратный расход (категория, тенге, не создаёт долг)"
-              : "Привязка к контакту (долг, любая валюта)"
-          }
-          onClick={() => setFreeMode((v) => !v)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center justify-self-center rounded-md border border-input text-muted-foreground hover:text-foreground sm:justify-self-auto"
-        >
-          {freeMode ? <Link2Off className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
-        </button>
-        {freeMode ? (
-          <Select value={category} onValueChange={setCategory}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {EXPENSE_CATEGORIES.map((c) => (
-                <SelectItem key={c.code} value={c.code}>
-                  {c.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <ContactNameAutocomplete
-            contacts={contacts}
-            name={name}
-            onNameChange={setName}
-            freeMode={false}
-            placeholder="Кто забрал / кому отдали"
-            nameRef={nameRef}
-            onEnterNext={() => currencyRef.current?.focus()}
-          />
-        )}
-        {freeMode ? (
-          <div className="flex h-9 items-center justify-center rounded-md border border-input bg-muted text-sm text-muted-foreground">
-            ₸ Тенге
-          </div>
-        ) : (
-          <CurrencySelect
-            value={currency}
-            onChange={setCurrency}
-            triggerRef={currencyRef}
-            onEnterNext={() => amountRef.current?.focus()}
-          />
-        )}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+        <ContactNameAutocomplete
+          contacts={contacts}
+          name={name}
+          onNameChange={setName}
+          freeMode={false}
+          placeholder="Кто забрал / кому отдали"
+          nameRef={nameRef}
+          onEnterNext={() => currencyRef.current?.focus()}
+        />
+        <CurrencySelect
+          value={currency}
+          onChange={setCurrency}
+          triggerRef={currencyRef}
+          onEnterNext={() => amountRef.current?.focus()}
+        />
         <AmountInput
           ref={amountRef}
           value={amount}
@@ -2206,29 +2628,13 @@ function ExpenseCombinedCard({
           <Minus className="h-4 w-4" /> M−
         </Button>
       </div>
-      {freeMode && isOther && (
-        <Input
-          ref={nameRef}
-          placeholder="Описание расхода (категория «Прочее»)"
-          value={otherNote}
-          onChange={(e) => setOtherNote(e.target.value)}
-          onKeyDown={(e) => handleEnterKey(e, () => amountRef.current?.focus())}
-        />
-      )}
       <p className="text-[11px] text-muted-foreground">
-        Значок слева переключает: привязка к контакту (долг, любая валюта, автоподсказка +
-        баланс при наведении, обновляет профиль в Контактах) или невозвратный расход
-        (Тамак/Айлык/Ага/Апше/Прочее, всегда в тенге — учитывается в «Калькуляторе дохода» как
-        расход, уменьшающий прибыль, и не создаёт баланс контакта).
+        Выдача денег конкретному контакту (долг, любая валюта, автоподсказка + баланс при
+        наведении, обновляет профиль в Контактах). Невозвратные расходы по категориям — в
+        карточке «Расходы» выше.
       </p>
-      <TxList
-        txs={txs}
-        onUpdate={onUpdate}
-        onDelete={onDelete}
-        withName
-        lockName
-        contactMap={contactMap}
-      />
+      <GroupedTxList txs={txs} onUpdate={onUpdate} onDelete={onDelete} contactMap={contactMap} />
+      <CurrencyTotalsFooter txs={txs} />
     </SectionCard>
   );
 }

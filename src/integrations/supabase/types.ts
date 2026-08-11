@@ -583,6 +583,36 @@ export type Database = {
           },
         ]
       }
+      payroll_employees: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          payday: number
+          salary_kzt: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          payday?: number
+          salary_kzt?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          payday?: number
+          salary_kzt?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
