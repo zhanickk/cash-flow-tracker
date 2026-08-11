@@ -327,6 +327,42 @@ export type Database = {
         }
         Relationships: []
       }
+      expenses: {
+        Row: {
+          amount_kzt: number
+          cash_transaction_id: string | null
+          cashier_name: string | null
+          category: string
+          created_at: string
+          id: string
+          note: string | null
+          occurred_at: string
+          updated_at: string
+        }
+        Insert: {
+          amount_kzt: number
+          cash_transaction_id?: string | null
+          cashier_name?: string | null
+          category: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          occurred_at?: string
+          updated_at?: string
+        }
+        Update: {
+          amount_kzt?: number
+          cash_transaction_id?: string | null
+          cashier_name?: string | null
+          category?: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          occurred_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       fx_currencies: {
         Row: {
           code: string

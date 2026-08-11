@@ -1,5 +1,7 @@
 import type { FxSale, FxCurrency } from "@/lib/fx-sales";
 import type { FxPurchase } from "@/lib/fx-purchases";
+import type { Expense } from "@/lib/expenses";
+import { expenseCategoryLabel } from "@/lib/expenses";
 
 export interface IncomeCurrencyBreakdown {
   currencyCode: string;
@@ -13,10 +15,24 @@ export interface IncomeCurrencyBreakdown {
   saleCount: number;
 }
 
+export interface ExpenseCategoryBreakdown {
+  category: string;
+  label: string;
+  amountKzt: number;
+  count: number;
+}
+
 export interface IncomeSummary {
+  /** Валовый доход — маржа от покупки/продажи валют (себестоимость метод). */
   totalMarginKzt: number;
   totalSoldKzt: number;
   byCurrency: IncomeCurrencyBreakdown[];
+  /** Невозвратные расходы за период (тамак/айлык/ага/апше/прочее), в тенге. */
+  totalExpensesKzt: number;
+  expensesByCategory: ExpenseCategoryBreakdown[];
+  /** Чистая прибыль = валовый доход − невозвратные расходы. Это должна быть
+   * итоговая цифра, которую видит пользователь как «прибыль». */
+  netProfitKzt: number;
 }
 
 interface CostEvent {
@@ -115,12 +131,38 @@ function computeCurrencyIncome(
   return { soldAmount, soldKzt, costOfSoldKzt, saleCount };
 }
 
+function buildExpensesSummary(
+  expenses: Expense[],
+  fromTs: number,
+  toTs: number,
+): { totalExpensesKzt: number; expensesByCategory: ExpenseCategoryBreakdown[] } {
+  const inPeriod = expenses.filter((e) => e.occurredAt >= fromTs && e.occurredAt <= toTs);
+  const byCategory = new Map<string, { amountKzt: number; count: number }>();
+  for (const e of inPeriod) {
+    const cur = byCategory.get(e.category) ?? { amountKzt: 0, count: 0 };
+    cur.amountKzt += e.amountKzt;
+    cur.count += 1;
+    byCategory.set(e.category, cur);
+  }
+  const expensesByCategory: ExpenseCategoryBreakdown[] = [...byCategory.entries()]
+    .map(([category, v]) => ({
+      category,
+      label: expenseCategoryLabel(category),
+      amountKzt: v.amountKzt,
+      count: v.count,
+    }))
+    .sort((a, b) => b.amountKzt - a.amountKzt);
+  const totalExpensesKzt = expensesByCategory.reduce((s, r) => s + r.amountKzt, 0);
+  return { totalExpensesKzt, expensesByCategory };
+}
+
 export function buildIncomeSummary(
   purchases: FxPurchase[],
   sales: FxSale[],
   currencies: FxCurrency[],
   fromTs: number,
   toTs: number,
+  expenses: Expense[] = [],
 ): IncomeSummary {
   const labelByCode = new Map(currencies.map((c) => [c.code, c.label]));
   const codes = new Set<string>();
@@ -154,6 +196,14 @@ export function buildIncomeSummary(
 
   const totalMarginKzt = byCurrency.reduce((s, r) => s + r.marginKzt, 0);
   const totalSoldKzt = byCurrency.reduce((s, r) => s + r.soldKzt, 0);
+  const { totalExpensesKzt, expensesByCategory } = buildExpensesSummary(expenses, fromTs, toTs);
 
-  return { totalMarginKzt, totalSoldKzt, byCurrency };
+  return {
+    totalMarginKzt,
+    totalSoldKzt,
+    byCurrency,
+    totalExpensesKzt,
+    expensesByCategory,
+    netProfitKzt: totalMarginKzt - totalExpensesKzt,
+  };
 }

@@ -16,6 +16,7 @@ import {
 } from "@/lib/fx-sales";
 import { periodLabelFromFilters } from "@/lib/fx-sales-report";
 import { useFxPurchases } from "@/lib/fx-purchases";
+import { useExpenses } from "@/lib/expenses";
 import { buildIncomeSummary } from "@/lib/income-calculator";
 
 export const Route = createFileRoute("/income-calculator")({
@@ -31,12 +32,12 @@ function quickPeriodTs(period: "day" | "week" | "month" | "year") {
 
 function QuickTile({
   label,
-  marginKzt,
+  amountKzt,
   active,
   onClick,
 }: {
   label: string;
-  marginKzt: number;
+  amountKzt: number;
   active: boolean;
   onClick: () => void;
 }) {
@@ -54,11 +55,11 @@ function QuickTile({
       <div
         className={cn(
           "mt-2 text-xl font-bold tabular-nums sm:text-2xl",
-          marginKzt > 0 && "text-success",
-          marginKzt < 0 && "text-danger",
+          amountKzt > 0 && "text-success",
+          amountKzt < 0 && "text-danger",
         )}
       >
-        {fmt(marginKzt)} ₸
+        {fmt(amountKzt)} ₸
       </div>
     </button>
   );
@@ -67,8 +68,9 @@ function QuickTile({
 function IncomeCalculatorPage() {
   const { data: purchases = [], isLoading: purchasesLoading } = useFxPurchases();
   const { data: sales = [], isLoading: salesLoading } = useFxSales();
+  const { data: expenses = [], isLoading: expensesLoading } = useExpenses();
   const { data: currencies = [] } = useFxCurrencies();
-  const isLoading = purchasesLoading || salesLoading;
+  const isLoading = purchasesLoading || salesLoading || expensesLoading;
 
   const [filters, setFilters] = useState<FxSalesFilters>(() => ({ ...defaultFilters(), period: "day" }));
 
@@ -78,20 +80,20 @@ function IncomeCalculatorPage() {
   const yearTs = useMemo(() => quickPeriodTs("year"), []);
 
   const dayIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, dayTs.fromTs, dayTs.toTs),
-    [purchases, sales, currencies, dayTs],
+    () => buildIncomeSummary(purchases, sales, currencies, dayTs.fromTs, dayTs.toTs, expenses),
+    [purchases, sales, currencies, dayTs, expenses],
   );
   const weekIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, weekTs.fromTs, weekTs.toTs),
-    [purchases, sales, currencies, weekTs],
+    () => buildIncomeSummary(purchases, sales, currencies, weekTs.fromTs, weekTs.toTs, expenses),
+    [purchases, sales, currencies, weekTs, expenses],
   );
   const monthIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, monthTs.fromTs, monthTs.toTs),
-    [purchases, sales, currencies, monthTs],
+    () => buildIncomeSummary(purchases, sales, currencies, monthTs.fromTs, monthTs.toTs, expenses),
+    [purchases, sales, currencies, monthTs, expenses],
   );
   const yearIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, yearTs.fromTs, yearTs.toTs),
-    [purchases, sales, currencies, yearTs],
+    () => buildIncomeSummary(purchases, sales, currencies, yearTs.fromTs, yearTs.toTs, expenses),
+    [purchases, sales, currencies, yearTs, expenses],
   );
 
   const customTs = useMemo(() => filtersToPeriodTs(filters), [filters]);
@@ -101,16 +103,19 @@ function IncomeCalculatorPage() {
     [currencies, customCurrencies],
   );
   const customIncome = useMemo(() => {
-    const full = buildIncomeSummary(purchases, sales, currencies, customTs.fromTs, customTs.toTs);
+    const full = buildIncomeSummary(purchases, sales, currencies, customTs.fromTs, customTs.toTs, expenses);
+    // Расходы не привязаны к валюте (всегда в тенге, категория) — фильтр по
+    // валюте влияет только на доход от купли/продажи, не на расходы.
     if (customCurrencies.length === 0) return full;
+    const byCurrency = full.byCurrency.filter((r) => customCurrencies.includes(r.currencyCode));
+    const totalMarginKzt = byCurrency.reduce((s, r) => s + r.marginKzt, 0);
     return {
       ...full,
-      byCurrency: full.byCurrency.filter((r) => customCurrencies.includes(r.currencyCode)),
-      totalMarginKzt: full.byCurrency
-        .filter((r) => customCurrencies.includes(r.currencyCode))
-        .reduce((s, r) => s + r.marginKzt, 0),
+      byCurrency,
+      totalMarginKzt,
+      netProfitKzt: totalMarginKzt - full.totalExpensesKzt,
     };
-  }, [purchases, sales, currencies, customTs, customCurrencies]);
+  }, [purchases, sales, currencies, customTs, customCurrencies, expenses]);
 
   function setPeriod(period: FxSalesFilters["period"]) {
     if (period === "custom" || period === "all") {
@@ -160,32 +165,34 @@ function IncomeCalculatorPage() {
             доход не «теряется», если купили в одном периоде, а продали в другом. Журнал покупок
             ведётся с 10.08.2026 — если для продажи нет данных о покупке (валюта продана раньше,
             чем куплена по журналу), доход по такой продаже считается нулевым, а не полной суммой
-            продажи, пока не накопится история покупок.
+            продажи, пока не накопится история покупок. Чистая прибыль = доход от купли/продажи
+            валют минус невозвратные расходы (Тамак/Айлык/Ага/Апше/Прочее из карточки «Расходы»,
+            всегда в тенге).
           </p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <QuickTile
-            label="Сегодня"
-            marginKzt={dayIncome.totalMarginKzt}
+            label="Сегодня · чистая прибыль"
+            amountKzt={dayIncome.netProfitKzt}
             active={filters.period === "day"}
             onClick={() => setPeriod("day")}
           />
           <QuickTile
-            label="Неделя"
-            marginKzt={weekIncome.totalMarginKzt}
+            label="Неделя · чистая прибыль"
+            amountKzt={weekIncome.netProfitKzt}
             active={filters.period === "week"}
             onClick={() => setPeriod("week")}
           />
           <QuickTile
-            label="Месяц"
-            marginKzt={monthIncome.totalMarginKzt}
+            label="Месяц · чистая прибыль"
+            amountKzt={monthIncome.netProfitKzt}
             active={filters.period === "month"}
             onClick={() => setPeriod("month")}
           />
           <QuickTile
-            label="Год"
-            marginKzt={yearIncome.totalMarginKzt}
+            label="Год · чистая прибыль"
+            amountKzt={yearIncome.netProfitKzt}
             active={filters.period === "year"}
             onClick={() => setPeriod("year")}
           />
@@ -262,17 +269,42 @@ function IncomeCalculatorPage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 py-3">
-            <CardTitle className="text-sm">Общий доход · {periodLabelFromFilters(filters)}</CardTitle>
-            <div
-              className={cn(
-                "text-lg font-bold tabular-nums",
-                customIncome.totalMarginKzt > 0 && "text-success",
-                customIncome.totalMarginKzt < 0 && "text-danger",
-              )}
-            >
-              {fmt(customIncome.totalMarginKzt)} ₸
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Итог · {periodLabelFromFilters(filters)}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Доход (купля/продажа валют)</div>
+                <div className="mt-1 text-lg font-bold tabular-nums">
+                  {fmt(customIncome.totalMarginKzt)} ₸
+                </div>
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="text-xs text-muted-foreground">Расходы (невозвратные)</div>
+                <div className="mt-1 text-lg font-bold tabular-nums text-danger">
+                  −{fmt(customIncome.totalExpensesKzt)} ₸
+                </div>
+              </div>
+              <div className="rounded-md border border-primary/40 bg-accent/40 p-3">
+                <div className="text-xs text-muted-foreground">Чистая прибыль</div>
+                <div
+                  className={cn(
+                    "mt-1 text-lg font-bold tabular-nums",
+                    customIncome.netProfitKzt > 0 && "text-success",
+                    customIncome.netProfitKzt < 0 && "text-danger",
+                  )}
+                >
+                  {fmt(customIncome.netProfitKzt)} ₸
+                </div>
+              </div>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Доход по валютам · {periodLabelFromFilters(filters)}</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
@@ -311,6 +343,46 @@ function IncomeCalculatorPage() {
                           )}
                         >
                           {fmt(row.marginKzt)} ₸
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">
+              Расходы по категориям · {periodLabelFromFilters(filters)}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {isLoading ? (
+              <p className="p-4 text-sm text-muted-foreground">Загрузка…</p>
+            ) : customIncome.expensesByCategory.length === 0 ? (
+              <p className="p-4 text-sm text-muted-foreground">
+                Нет невозвратных расходов за этот период
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[480px] text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="px-3 py-2">Категория</th>
+                      <th className="px-3 py-2">Операций</th>
+                      <th className="px-3 py-2">Сумма</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customIncome.expensesByCategory.map((row) => (
+                      <tr key={row.category} className="border-b border-border/60">
+                        <td className="px-3 py-2 font-medium">{row.label}</td>
+                        <td className="px-3 py-2 tabular-nums">{row.count}</td>
+                        <td className="px-3 py-2 tabular-nums font-semibold text-danger">
+                          {fmt(row.amountKzt)} ₸
                         </td>
                       </tr>
                     ))}

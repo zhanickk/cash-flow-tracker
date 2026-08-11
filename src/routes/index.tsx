@@ -67,6 +67,7 @@ import {
   type DailyReportData,
 } from "@/lib/daily-report";
 import { buildSummaryReportWorkbook, summaryReportFileBaseName } from "@/lib/summary-report";
+import { EXPENSE_CATEGORIES } from "@/lib/expenses";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
 import { LogOut } from "lucide-react";
@@ -1726,6 +1727,76 @@ function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   );
 }
 
+/** Автоподсказка по имени контакта — только поле ввода и выпадающий список,
+ * без переключателя режима (используется как внутри ContactAutocompleteField,
+ * так и напрямую там, где переключатель режима свой собственный). */
+function ContactNameAutocomplete({
+  contacts,
+  name,
+  onNameChange,
+  freeMode,
+  placeholder,
+  nameRef,
+  onEnterNext,
+}: {
+  contacts: ContactWithBalance[];
+  name: string;
+  onNameChange: (v: string) => void;
+  freeMode: boolean;
+  placeholder: string;
+  nameRef: React.RefObject<HTMLInputElement | null>;
+  onEnterNext?: () => void;
+}) {
+  const [showDropdown, setShowDropdown] = useState(false);
+  const blurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const suggestions = useMemo(() => {
+    const q = name.trim().toLowerCase();
+    if (!q || freeMode) return [];
+    const starts = contacts.filter((c) => c.name.toLowerCase().startsWith(q));
+    const list =
+      starts.length > 0 ? starts : contacts.filter((c) => c.name.toLowerCase().includes(q));
+    return list.slice(0, 6);
+  }, [contacts, name, freeMode]);
+
+  return (
+    <div className="relative">
+      <FlowInput
+        ref={nameRef}
+        placeholder={placeholder}
+        value={name}
+        onChange={(e) => {
+          onNameChange(e.target.value);
+          setShowDropdown(true);
+        }}
+        onFocus={() => setShowDropdown(true)}
+        onBlur={() => {
+          blurTimeout.current = setTimeout(() => setShowDropdown(false), 150);
+        }}
+        onEnterNext={onEnterNext}
+      />
+      {showDropdown && suggestions.length > 0 && (
+        <div className="absolute left-0 top-full z-20 mt-1 w-56 rounded-md border border-border bg-popover shadow-md">
+          {suggestions.map((c) => (
+            <div
+              key={c.id}
+              className="cursor-pointer px-3 py-1.5 text-sm hover:bg-muted"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                if (blurTimeout.current) clearTimeout(blurTimeout.current);
+                onNameChange(c.name);
+                setShowDropdown(false);
+              }}
+            >
+              {c.name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ContactAutocompleteField({
   contacts,
   name,
@@ -1747,18 +1818,6 @@ function ContactAutocompleteField({
   nameRef: React.RefObject<HTMLInputElement | null>;
   onEnterNext?: () => void;
 }) {
-  const [showDropdown, setShowDropdown] = useState(false);
-  const blurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const suggestions = useMemo(() => {
-    const q = name.trim().toLowerCase();
-    if (!q || freeMode) return [];
-    const starts = contacts.filter((c) => c.name.toLowerCase().startsWith(q));
-    const list =
-      starts.length > 0 ? starts : contacts.filter((c) => c.name.toLowerCase().includes(q));
-    return list.slice(0, 6);
-  }, [contacts, name, freeMode]);
-
   return (
     <>
       <button
@@ -1770,40 +1829,15 @@ function ContactAutocompleteField({
       >
         {freeMode ? <Link2Off className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
       </button>
-      <div className="relative">
-        <FlowInput
-          ref={nameRef}
-          placeholder={freeMode ? freePlaceholder : linkedPlaceholder}
-          value={name}
-          onChange={(e) => {
-            onNameChange(e.target.value);
-            setShowDropdown(true);
-          }}
-          onFocus={() => setShowDropdown(true)}
-          onBlur={() => {
-            blurTimeout.current = setTimeout(() => setShowDropdown(false), 150);
-          }}
-          onEnterNext={onEnterNext}
-        />
-        {showDropdown && suggestions.length > 0 && (
-          <div className="absolute left-0 top-full z-20 mt-1 w-56 rounded-md border border-border bg-popover shadow-md">
-            {suggestions.map((c) => (
-              <div
-                key={c.id}
-                className="cursor-pointer px-3 py-1.5 text-sm hover:bg-muted"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  if (blurTimeout.current) clearTimeout(blurTimeout.current);
-                  onNameChange(c.name);
-                  setShowDropdown(false);
-                }}
-              >
-                {c.name}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <ContactNameAutocomplete
+        contacts={contacts}
+        name={name}
+        onNameChange={onNameChange}
+        freeMode={freeMode}
+        placeholder={freeMode ? freePlaceholder : linkedPlaceholder}
+        nameRef={nameRef}
+        onEnterNext={onEnterNext}
+      />
     </>
   );
 }
@@ -1907,25 +1941,45 @@ function ExpenseCombinedCard({
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
   const [freeMode, setFreeMode] = useState(false);
+  const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0].code);
+  const [otherNote, setOtherNote] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
   const currencyRef = useRef<HTMLButtonElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
 
+  const categoryLabel = EXPENSE_CATEGORIES.find((c) => c.code === category)?.label ?? "";
+  const isOther = category === "other";
+
   const submit = async () => {
     const a = parseAmount(amount);
-    const trimmed = name.trim();
     if (a <= 0) return;
-    if (!freeMode && !trimmed) return;
-    await onAdd({
-      kind: "expense",
-      currency,
-      amount: a,
-      name: trimmed || undefined,
-      expenseType: freeMode ? "regular" : "person",
-    });
+    if (freeMode) {
+      // Невозвратный расход: фиксированная категория (Тамак/Айлык/Ага/Апше)
+      // или «Прочее» со свободным текстом. Всегда в тенге — это учитывается
+      // в «Калькуляторе дохода» как расход, уменьшающий чистую прибыль.
+      const label = isOther ? otherNote.trim() || "Прочее" : categoryLabel;
+      await onAdd({
+        kind: "expense",
+        currency: "KZT",
+        amount: a,
+        name: label,
+        expenseType: "regular",
+      });
+      setOtherNote("");
+    } else {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      await onAdd({
+        kind: "expense",
+        currency,
+        amount: a,
+        name: trimmed,
+        expenseType: "person",
+      });
+      setName("");
+    }
     setAmount("");
-    setName("");
-    nameRef.current?.focus();
+    (isOther ? nameRef : amountRef).current?.focus();
   };
 
   return (
@@ -1936,23 +1990,55 @@ function ExpenseCombinedCard({
       badge={`${txs.length}`}
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_1fr_1fr_auto]">
-        <ContactAutocompleteField
-          contacts={contacts}
-          name={name}
-          onNameChange={setName}
-          freeMode={freeMode}
-          onToggleFreeMode={() => setFreeMode((v) => !v)}
-          linkedPlaceholder="Кто забрал / кому отдали"
-          freePlaceholder="Название расхода"
-          nameRef={nameRef}
-          onEnterNext={() => currencyRef.current?.focus()}
-        />
-        <CurrencySelect
-          value={currency}
-          onChange={setCurrency}
-          triggerRef={currencyRef}
-          onEnterNext={() => amountRef.current?.focus()}
-        />
+        <button
+          type="button"
+          aria-label={freeMode ? "Режим: невозвратный расход" : "Режим: контакт"}
+          title={
+            freeMode
+              ? "Невозвратный расход (категория, тенге, не создаёт долг)"
+              : "Привязка к контакту (долг, любая валюта)"
+          }
+          onClick={() => setFreeMode((v) => !v)}
+          className="flex h-9 w-9 shrink-0 items-center justify-center justify-self-center rounded-md border border-input text-muted-foreground hover:text-foreground sm:justify-self-auto"
+        >
+          {freeMode ? <Link2Off className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+        </button>
+        {freeMode ? (
+          <Select value={category} onValueChange={setCategory}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {EXPENSE_CATEGORIES.map((c) => (
+                <SelectItem key={c.code} value={c.code}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <ContactNameAutocomplete
+            contacts={contacts}
+            name={name}
+            onNameChange={setName}
+            freeMode={false}
+            placeholder="Кто забрал / кому отдали"
+            nameRef={nameRef}
+            onEnterNext={() => currencyRef.current?.focus()}
+          />
+        )}
+        {freeMode ? (
+          <div className="flex h-9 items-center justify-center rounded-md border border-input bg-muted text-sm text-muted-foreground">
+            ₸ Тенге
+          </div>
+        ) : (
+          <CurrencySelect
+            value={currency}
+            onChange={setCurrency}
+            triggerRef={currencyRef}
+            onEnterNext={() => amountRef.current?.focus()}
+          />
+        )}
         <AmountInput
           ref={amountRef}
           value={amount}
@@ -1964,9 +2050,20 @@ function ExpenseCombinedCard({
           <Minus className="h-4 w-4" /> M−
         </Button>
       </div>
+      {freeMode && isOther && (
+        <Input
+          ref={nameRef}
+          placeholder="Описание расхода (категория «Прочее»)"
+          value={otherNote}
+          onChange={(e) => setOtherNote(e.target.value)}
+          onKeyDown={(e) => handleEnterKey(e, () => amountRef.current?.focus())}
+        />
+      )}
       <p className="text-[11px] text-muted-foreground">
-        Значок слева переключает: привязка к контакту (автоподсказка + баланс при наведении,
-        обновляет профиль в Контактах) или просто заметка без привязки.
+        Значок слева переключает: привязка к контакту (долг, любая валюта, автоподсказка +
+        баланс при наведении, обновляет профиль в Контактах) или невозвратный расход
+        (Тамак/Айлык/Ага/Апше/Прочее, всегда в тенге — учитывается в «Калькуляторе дохода» как
+        расход, уменьшающий прибыль, и не создаёт баланс контакта).
       </p>
       <TxList
         txs={txs}
