@@ -67,7 +67,7 @@ import {
   type DailyReportData,
 } from "@/lib/daily-report";
 import { buildSummaryReportWorkbook, summaryReportFileBaseName } from "@/lib/summary-report";
-import { EXPENSE_CATEGORIES } from "@/lib/expenses";
+import { EXPENSE_CATEGORIES, matchesExpenseCategoryLabel } from "@/lib/expenses";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
 import { LogOut } from "lucide-react";
@@ -1969,13 +1969,26 @@ function ExpenseCombinedCard({
     } else {
       const trimmed = name.trim();
       if (!trimmed) return;
-      await onAdd({
-        kind: "expense",
-        currency,
-        amount: a,
-        name: trimmed,
-        expenseType: "person",
-      });
+      // Подстраховка: если ввели ровно название категории (тамак/айлык/ага/
+      // апше), не переключив тумблер — не создаём фейковый контакт-должника,
+      // а записываем как невозвратный расход в тенге, как и было задумано.
+      if (matchesExpenseCategoryLabel(trimmed)) {
+        await onAdd({
+          kind: "expense",
+          currency: "KZT",
+          amount: a,
+          name: trimmed,
+          expenseType: "regular",
+        });
+      } else {
+        await onAdd({
+          kind: "expense",
+          currency,
+          amount: a,
+          name: trimmed,
+          expenseType: "person",
+        });
+      }
       setName("");
     }
     setAmount("");

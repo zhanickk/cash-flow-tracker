@@ -23,9 +23,18 @@ export type ExpenseCategoryCode = (typeof EXPENSE_CATEGORIES)[number]["code"];
 const CATEGORY_LABEL_BY_CODE = new Map<string, string>(
   EXPENSE_CATEGORIES.map((c) => [c.code, c.label]),
 );
+// Ключ в нижнем регистре — совпадение по категории не должно зависеть от
+// регистра ввода ("тамак" и "Тамак" — одна и та же категория).
 const CATEGORY_CODE_BY_LABEL = new Map<string, string>(
-  EXPENSE_CATEGORIES.filter((c) => c.code !== "other").map((c) => [c.label, c.code]),
+  EXPENSE_CATEGORIES.filter((c) => c.code !== "other").map((c) => [c.label.toLowerCase(), c.code]),
 );
+
+/** true, если строка точно (без учёта регистра) совпадает с названием одной
+ * из фиксированных категорий расхода — используется, чтобы подстраховаться,
+ * если человек ввёл имя категории в режиме "контакт", не переключив тумблер. */
+export function matchesExpenseCategoryLabel(raw: string): boolean {
+  return CATEGORY_CODE_BY_LABEL.has(raw.trim().toLowerCase());
+}
 
 export function expenseCategoryLabel(code: string): string {
   return CATEGORY_LABEL_BY_CODE.get(code) ?? code;
@@ -86,7 +95,7 @@ export async function recordExpense(input: {
  * берём её код, иначе это «Прочее» с этим текстом в note. */
 function resolveCategory(name: string | null | undefined): { category: string; note: string | null } {
   const trimmed = (name ?? "").trim();
-  const code = CATEGORY_CODE_BY_LABEL.get(trimmed);
+  const code = CATEGORY_CODE_BY_LABEL.get(trimmed.toLowerCase());
   if (code) return { category: code, note: null };
   return { category: "other", note: trimmed || null };
 }
