@@ -416,31 +416,34 @@ function Index() {
   async function openDailyReport() {
     setReportBusy(true);
     try {
-      const { fromTs, toTs } = filtersToPeriodTs({
-        period: "day",
-        dateFrom: "",
-        dateTo: "",
-        currencies: [],
-      });
-      // Если журналы покупок/продаж/расходов ещё не подгрузились — не
-      // считаем margin по неполным (пустым) данным, это давало 0 в отчёте
-      // при живой кассе. Вместо этого отчёт просто использует старый
-      // посуточный расчёт (undefined = buildDailyReport сам посчитает как
-      // раньше), не показывая ложный ноль.
+      // ВАЖНО: "Новый день" — ручное действие, а не полночь по календарю.
+      // Если кассир не сбросил кассу сразу после полуночи, транзакции
+      // текущей (ещё не сброшенной) сессии могут лежать на "вчерашней"
+      // календарной дате, а отчёт открывается уже "сегодня". Поэтому период
+      // для маржи по себестоимости берём не "с полуночи по календарю", а по
+      // факту — от самой ранней транзакции текущей сессии (обычно это
+      // "Остаток" после последнего сброса) до текущего момента. Иначе
+      // реальные сделки вчерашним числом просто не попадают в окно и margin
+      // считается по пустому диапазону — 0 при живой кассе.
+      const sessionFromTs =
+        transactions.length > 0
+          ? Math.min(...transactions.map((t) => t.ts))
+          : filtersToPeriodTs({ period: "day", dateFrom: "", dateTo: "", currencies: [] }).fromTs;
+      const toTs = Date.now();
       const weightedAvg = weightedAvgDataLoading
         ? undefined
         : (() => {
-            const todayIncome = buildIncomeSummary(
+            const sessionIncome = buildIncomeSummary(
               fxPurchasesAll,
               fxSalesAll,
               fxCurrenciesAll,
-              fromTs,
+              sessionFromTs,
               toTs,
               expensesAll,
             );
             return {
-              fxMarginKzt: todayIncome.totalMarginKzt,
-              expensesKzt: todayIncome.totalExpensesKzt,
+              fxMarginKzt: sessionIncome.totalMarginKzt,
+              expensesKzt: sessionIncome.totalExpensesKzt,
             };
           })();
       const data = buildDailyReport(transactions, totals, weightedAvg);
