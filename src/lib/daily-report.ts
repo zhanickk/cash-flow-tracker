@@ -63,17 +63,23 @@ export interface DailyReportData {
     outKzt: number;
     netKzt: number;
   }[];
-  /** USD: трата Жұрттың ақшасы за день (продажа − покупка) */
+  /** USD: трата Жұрттың ақшасы за сессию — либо продали больше, чем купили
+   * (излишек продан из резерва), либо купили больше, чем продали (тенге
+   * потрачены на остаток). direction === "balanced", если куплено = продано. */
   peopleMoneySpendUsd: {
     boughtUsd: number;
     soldUsd: number;
+    direction: "reserve_spend" | "excess_buy" | "balanced";
     excessUsd: number;
-    avgSellRate: number;
+    avgRate: number;
     spendKzt: number;
   };
   buyRows: ReportTransaction[];
   sellRows: ReportTransaction[];
   personRows: ReportTransaction[];
+  /** Все контакты (валютные счета) с ненулевым балансом в USD и/или KZT —
+   * снимок на момент формирования отчёта. */
+  contactAccounts: { name: string; usdBalance: number; kztBalance: number }[];
 }
 
 const FX: Currency[] = ["USD", "EUR", "RUB", "KGS", "CNY", "GOLD"];
@@ -168,6 +174,15 @@ export function buildDailyReport(
      */
     marginByCurrency?: Record<string, number>;
   },
+  /** Дата, которой датируется отчёт (заголовок + имя файла) — это дата
+   * НАЧАЛА текущей сессии кассы (первая транзакция после последнего
+   * "Новый день"), а НЕ календарная "сегодня". "Новый день" — ручное
+   * действие: если его не нажали, отчёт остаётся датирован тем днём, когда
+   * касса была реально открыта, даже если сейчас уже наступила полночь. */
+  reportDate: Date = new Date(),
+  /** Все контакты (валютные счета) с ненулевым балансом USD/KZT — снимок
+   * для отдельного листа отчёта. */
+  contacts: { name: string; usdBalance: number; kztBalance: number }[] = [],
 ): DailyReportData {
   const now = new Date();
   const opening: Record<Currency, number> = {
@@ -272,12 +287,17 @@ export function buildDailyReport(
 
   const peopleMoneyDay = peopleMoneySpendFromReportTxs(transactions);
   const peopleMoneySpendUsd = {
-    boughtUsd: peopleMoneyDay.boughtUsd,
-    soldUsd: peopleMoneyDay.soldUsd,
-    excessUsd: peopleMoneyDay.excessUsd,
-    avgSellRate: peopleMoneyDay.avgSellRate,
+    boughtUsd: peopleMoneyDay.boughtAmt,
+    soldUsd: peopleMoneyDay.soldAmt,
+    direction: peopleMoneyDay.direction,
+    excessUsd: peopleMoneyDay.excessAmt,
+    avgRate: peopleMoneyDay.avgRate,
     spendKzt: peopleMoneyDay.spendKzt,
   };
+
+  const contactAccounts = contacts
+    .filter((c) => c.usdBalance !== 0 || c.kztBalance !== 0)
+    .sort((a, b) => Math.abs(b.usdBalance) + Math.abs(b.kztBalance) - (Math.abs(a.usdBalance) + Math.abs(a.kztBalance)));
 
   const rows = [...transactions]
     .sort((a, b) => a.ts - b.ts)
@@ -296,13 +316,13 @@ export function buildDailyReport(
     }));
 
   return {
-    dateTitle: now.toLocaleDateString("ru-RU", {
+    dateTitle: reportDate.toLocaleDateString("ru-RU", {
       weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
     }),
-    fileBaseName: reportFileBaseName(now),
+    fileBaseName: reportFileBaseName(reportDate),
     generatedAt: now.toLocaleString("ru-RU"),
     rows,
     opening,
@@ -322,6 +342,7 @@ export function buildDailyReport(
     netProfitKzt,
     peopleBalance,
     peopleMoneySpendUsd,
+    contactAccounts,
     buyRows,
     sellRows,
     personRows,
@@ -386,7 +407,7 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
   summary.columns = [{ width: 36 }, { width: 22 }, { width: 22 }];
   summary.mergeCells("A1:C1");
   const title = summary.getCell("A1");
-  title.value = `Дневной отчёт — ${data.dateTitle}`;
+  title.value = `Отчёт — ${data.dateTitle}`;
   title.font = { size: 16, bold: true, color: { argb: "FF1E3A5F" } };
   title.alignment = { horizontal: "center" };
   summary.getCell("A2").value = `Сформирован: ${data.generatedAt}`;
@@ -405,21 +426,27 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
     r++;
   };
 
-  addSummaryRow("Маржа обмена (KZT, по средневзвешенной себестоимости)", data.totalFxMarginKzt, "good");
-  const usdFx = data.fxRows.find((x) => x.currency === "USD");
-  if (usdFx && (usdFx.boughtAmount > 0 || usdFx.soldAmount > 0)) {
+  addSummaryRow("Доход (маржа обмена, KZT, по себестоимости)", data.totalFxMarginKzt, "good");
+  const pms = data.peopleMoneySpendUsd;
+  if (pms.boughtUsd > 0 || pms.soldUsd > 0) {
+    const label =
+      pms.direction === "reserve_spend"
+        ? "Трата Жұрттың ақшасы — продано сверх покупки (из резерва)"
+        : pms.direction === "excess_buy"
+          ? "Трата Жұрттың ақшасы — куплено сверх продажи (потрачено тенге на остаток)"
+          : "Трата Жұрттың ақшасы (USD, KZT)";
     addSummaryRow(
-      "Трата Жұрттың ақшасы (USD, KZT)",
-      data.peopleMoneySpendUsd.excessUsd > 0
-        ? `${fmt(data.peopleMoneySpendUsd.excessUsd)} $ × ${fmt(data.peopleMoneySpendUsd.avgSellRate, 4)} = ${fmt(data.peopleMoneySpendUsd.spendKzt)} ₸`
-        : "0 (покупка ≥ продажа)",
-      data.peopleMoneySpendUsd.excessUsd > 0 ? "bad" : undefined,
+      label,
+      pms.direction !== "balanced"
+        ? `${fmt(pms.excessUsd)} $ × ${fmt(pms.avgRate, 4)} = ${fmt(pms.spendKzt)} ₸`
+        : "0 (куплено = продано)",
+      pms.direction === "reserve_spend" ? "bad" : undefined,
     );
   }
   addSummaryRow("Приход без привязки к контакту KZT", data.regularIncomeKzt, "good");
   addSummaryRow("Обычные расходы KZT", data.regularExpenseKzt, "bad");
   addSummaryRow(
-    "Чистая прибыль дня (KZT)",
+    "Чистая прибыль дня, с учётом расходов (KZT)",
     data.netProfitKzt,
     data.netProfitKzt >= 0 ? "good" : "bad",
   );
@@ -443,6 +470,23 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
     });
     r++;
   }
+
+  const accountsSheet = wb.addWorksheet("Валютные счета", {
+    properties: { tabColor: { argb: "FFEA580C" } },
+  });
+  accountsSheet.columns = [{ width: 26 }, { width: 16 }, { width: 16 }];
+  styleHeaderRow(accountsSheet.addRow(["Контакт", "USD", "KZT"]));
+  for (const c of data.contactAccounts) {
+    accountsSheet.addRow([c.name, c.usdBalance, c.kztBalance]);
+    const rr = accountsSheet.lastRow;
+    if (rr) {
+      styleRowBorders(rr);
+      rr.getCell(2).numFmt = "#,##0.00";
+      rr.getCell(3).numFmt = "#,##0.00";
+    }
+  }
+  accountsSheet.autoFilter = { from: "A1", to: "C1" };
+  styleDataSheet(accountsSheet);
 
   const fx = wb.addWorksheet("Купля-продажа", {
     properties: { tabColor: { argb: "FF059669" } },

@@ -85,7 +85,7 @@ import {
   type Employee,
 } from "@/lib/payroll";
 import { useFxPurchases } from "@/lib/fx-purchases";
-import { useFxCurrencies, useFxSales, filtersToPeriodTs } from "@/lib/fx-sales";
+import { useFxCurrencies, useFxSales } from "@/lib/fx-sales";
 import { buildIncomeSummary } from "@/lib/income-calculator";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
@@ -220,15 +220,6 @@ function onCurrencyChange(
   });
 }
 
-function todayStr() {
-  return new Date().toLocaleDateString("ru-RU", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
-
 const REPORT_DONE_KEY = "cash-register-report-done-v1";
 const RESET_PIN = "0000";
 
@@ -261,6 +252,28 @@ function Index() {
   // Пока эти журналы ещё не загрузились, weightedAvg считать нельзя — иначе
   // отчёт покажет 0 дохода вместо "подождите" (пустые массивы по умолчанию).
   const weightedAvgDataLoading = fxPurchasesLoading || fxSalesLoading || expensesLoading;
+
+  // "Новый день" — ручное действие, а не полночь по календарю: пока кассу не
+  // сбросили явно, дата в шапке и статус "отчёт за сегодня сделан" должны
+  // отражать день начала ТЕКУЩЕЙ сессии (первая транзакция после последнего
+  // сброса), а не календарную дату устройства — иначе в полночь всё это
+  // молча "перескакивает" на следующий день, хотя касса ещё не закрыта.
+  const sessionFromTs = useMemo(
+    () => (transactions.length > 0 ? Math.min(...transactions.map((t) => t.ts)) : Date.now()),
+    [transactions],
+  );
+  const sessionDateKey = useMemo(() => todayDateKey(new Date(sessionFromTs)), [sessionFromTs]);
+  const sessionDateLabel = useMemo(
+    () =>
+      new Date(sessionFromTs).toLocaleDateString("ru-RU", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      }),
+    [sessionFromTs],
+  );
+
   const addCashTx = useAddCashTransaction();
   const updateCashTx = useUpdateCashTransaction();
   const deleteCashTx = useDeleteCashTransaction();
@@ -279,7 +292,7 @@ function Index() {
     if (typeof window === "undefined") return false;
     try {
       const raw = localStorage.getItem(REPORT_DONE_KEY);
-      return raw ? JSON.parse(raw).date === todayDateKey() : false;
+      return raw ? JSON.parse(raw).date === sessionDateKey : false;
     } catch {
       return false;
     }
@@ -425,26 +438,20 @@ function Index() {
   }
 
   function markReportDone() {
-    localStorage.setItem(REPORT_DONE_KEY, JSON.stringify({ date: todayDateKey(), at: Date.now() }));
+    localStorage.setItem(REPORT_DONE_KEY, JSON.stringify({ date: sessionDateKey, at: Date.now() }));
     setReportDoneToday(true);
   }
 
   async function openDailyReport() {
     setReportBusy(true);
     try {
-      // ВАЖНО: "Новый день" — ручное действие, а не полночь по календарю.
-      // Если кассир не сбросил кассу сразу после полуночи, транзакции
-      // текущей (ещё не сброшенной) сессии могут лежать на "вчерашней"
-      // календарной дате, а отчёт открывается уже "сегодня". Поэтому период
-      // для маржи по себестоимости берём не "с полуночи по календарю", а по
-      // факту — от самой ранней транзакции текущей сессии (обычно это
-      // "Остаток" после последнего сброса) до текущего момента. Иначе
-      // реальные сделки вчерашним числом просто не попадают в окно и margin
-      // считается по пустому диапазону — 0 при живой кассе.
-      const sessionFromTs =
-        transactions.length > 0
-          ? Math.min(...transactions.map((t) => t.ts))
-          : filtersToPeriodTs({ period: "day", dateFrom: "", dateTo: "", currencies: [] }).fromTs;
+      // ВАЖНО: "Новый день" — ручное действие, а не полночь по календарю
+      // (см. sessionFromTs выше). Период для маржи по себестоимости берём
+      // не "с полуночи по календарю", а по факту — от самой ранней
+      // транзакции текущей сессии (обычно это "Остаток" после последнего
+      // сброса) до текущего момента. Иначе реальные сделки вчерашним числом
+      // просто не попадают в окно и margin считается по пустому диапазону —
+      // 0 при живой кассе.
       const toTs = Date.now();
       const weightedAvg = weightedAvgDataLoading
         ? undefined
@@ -467,7 +474,19 @@ function Index() {
               marginByCurrency,
             };
           })();
-      const data = buildDailyReport(transactions, totals, weightedAvg);
+      // Дата отчёта = дата начала текущей сессии, а не календарная "сегодня"
+      // — тот же принцип, что и для шапки страницы: пока не нажали "Новый
+      // день", отчёт остаётся датирован тем днём, когда касса реально была
+      // открыта.
+      const reportDate = new Date(sessionFromTs);
+      const contactAccounts = contactsWithBalances
+        .map((c) => ({
+          name: c.name,
+          usdBalance: c.balances.USD ?? 0,
+          kztBalance: c.balances.KZT ?? 0,
+        }))
+        .filter((c) => c.usdBalance !== 0 || c.kztBalance !== 0);
+      const data = buildDailyReport(transactions, totals, weightedAvg, reportDate, contactAccounts);
       const buffer = await buildReportWorkbook(data);
       setReportData(data);
       setReportExcel(buffer);
@@ -548,7 +567,7 @@ function Index() {
           <div className="flex items-center justify-between gap-3">
             <div className="text-lg font-semibold tracking-wide text-primary">Dimak</div>
             <div className="text-center text-xs font-medium capitalize text-muted-foreground sm:text-sm">
-              {todayStr()}
+              {sessionDateLabel}
             </div>
             <div className="flex items-center gap-1">
               {cashierName && (
