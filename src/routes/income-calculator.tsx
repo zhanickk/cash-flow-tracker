@@ -18,6 +18,7 @@ import { periodLabelFromFilters } from "@/lib/fx-sales-report";
 import { useFxPurchases } from "@/lib/fx-purchases";
 import { useExpenses } from "@/lib/expenses";
 import { buildIncomeSummary } from "@/lib/income-calculator";
+import { useCashTransactions } from "@/lib/cash-register";
 
 export const Route = createFileRoute("/income-calculator")({
   head: () => ({
@@ -70,11 +71,21 @@ function IncomeCalculatorPage() {
   const { data: sales = [], isLoading: salesLoading } = useFxSales();
   const { data: expenses = [], isLoading: expensesLoading } = useExpenses();
   const { data: currencies = [] } = useFxCurrencies();
+  const { data: transactions = [] } = useCashTransactions();
   const isLoading = purchasesLoading || salesLoading || expensesLoading;
 
   const [filters, setFilters] = useState<FxSalesFilters>(() => ({ ...defaultFilters(), period: "day" }));
 
-  const dayTs = useMemo(() => quickPeriodTs("day"), []);
+  // "Новый день" — ручное действие, а не полночь по календарю (см. ту же
+  // логику на главной странице). "Сегодня" здесь должно значить "текущая,
+  // ещё не закрытая смена", а не календарные сутки — иначе расход,
+  // записанный поздно ночью до нажатия "Новый день", молча "перескакивает"
+  // в доход следующего календарного дня, хотя по смене он ещё вчерашний.
+  const sessionFromTs = useMemo(
+    () => (transactions.length > 0 ? Math.min(...transactions.map((t) => t.ts)) : Date.now()),
+    [transactions],
+  );
+  const dayTs = useMemo(() => ({ fromTs: sessionFromTs, toTs: Infinity }), [sessionFromTs]);
   const weekTs = useMemo(() => quickPeriodTs("week"), []);
   const monthTs = useMemo(() => quickPeriodTs("month"), []);
   const yearTs = useMemo(() => quickPeriodTs("year"), []);
@@ -96,7 +107,13 @@ function IncomeCalculatorPage() {
     [purchases, sales, currencies, yearTs, expenses],
   );
 
-  const customTs = useMemo(() => filtersToPeriodTs(filters), [filters]);
+  // День выбран через фильтр периода — используем ту же границу текущей
+  // смены, что и в плитке "Сегодня" выше, а не календарный день, иначе
+  // цифры в плитке и в детальной разбивке ниже разойдутся.
+  const customTs = useMemo(
+    () => (filters.period === "day" ? dayTs : filtersToPeriodTs(filters)),
+    [filters, dayTs],
+  );
   const customCurrencies = filters.currencies ?? [];
   const filteredCurrencies = useMemo(
     () => currencies.filter((c) => customCurrencies.length === 0 || customCurrencies.includes(c.code)),
