@@ -156,6 +156,75 @@ function buildExpensesSummary(
   return { totalExpensesKzt, expensesByCategory };
 }
 
+export interface InventoryCostBasis {
+  /** Остаток валюты на руках по журналу покупок/продаж (может быть 0). */
+  qty: number;
+  /** Себестоимость этого остатка в тенге. */
+  costKzt: number;
+  /** Средневзвешенный курс покупки остатка = costKzt / qty. */
+  avgRate: number;
+}
+
+/**
+ * Средневзвешенная себестоимость ОСТАТКА по каждой валюте на конец истории.
+ *
+ * Тот же проход, что и в computeCurrencyIncome (покупки добавляют к остатку и
+ * его стоимости, продажи списывают по текущей средней), но нас интересует не
+ * маржа продаж, а то, что осталось на руках и по какому курсу оно куплено.
+ * Именно это отвечает на вопрос «сколько денег вкладчиков вложено в валюту,
+ * которая сейчас лежит в кассе».
+ */
+export function computeInventoryCostBasis(
+  purchases: FxPurchase[],
+  sales: FxSale[],
+): Record<string, InventoryCostBasis> {
+  const codes = new Set<string>();
+  for (const p of purchases) codes.add(p.currencyCode);
+  for (const s of sales) codes.add(s.currencyCode);
+
+  const result: Record<string, InventoryCostBasis> = {};
+  for (const code of codes) {
+    const events: CostEvent[] = [
+      ...purchases
+        .filter((p) => p.currencyCode === code)
+        .map((p) => ({
+          ts: p.occurredAt,
+          type: "buy" as const,
+          foreignAmount: p.foreignAmount,
+          kztAmount: p.kztAmount,
+        })),
+      ...sales
+        .filter((x) => x.currencyCode === code)
+        .map((x) => ({
+          ts: x.occurredAt,
+          type: "sell" as const,
+          foreignAmount: x.foreignAmount,
+          kztAmount: x.kztAmount,
+        })),
+    ].sort((a, b) => a.ts - b.ts || (a.type === "buy" ? -1 : 1));
+
+    let qty = 0;
+    let costKzt = 0;
+    for (const e of events) {
+      if (e.type === "buy") {
+        qty += e.foreignAmount;
+        costKzt += e.kztAmount;
+        continue;
+      }
+      const backed = Math.min(qty, e.foreignAmount);
+      const avgCost = qty > 0 ? costKzt / qty : 0;
+      qty -= backed;
+      costKzt -= backed * avgCost;
+      if (qty <= 0) {
+        qty = 0;
+        costKzt = 0;
+      }
+    }
+    result[code] = { qty, costKzt, avgRate: qty > 0 ? costKzt / qty : 0 };
+  }
+  return result;
+}
+
 export function buildIncomeSummary(
   purchases: FxPurchase[],
   sales: FxSale[],

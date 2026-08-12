@@ -80,6 +80,51 @@ export interface DailyReportData {
   /** Все контакты (валютные счета) с ненулевым балансом в USD и/или KZT —
    * снимок на момент формирования отчёта. */
   contactAccounts: { name: string; usdBalance: number; kztBalance: number }[];
+  /** Данные для листа «Касса» — повторяет ручную таблицу обменника. */
+  cashSheet: CashSheetData;
+}
+
+export interface CashSheetAccount {
+  name: string;
+  amount: number;
+  currency: Currency;
+}
+
+export interface CashSheetCurrencyTotal {
+  currency: Currency;
+  /** Остаток в кассе на конец смены. */
+  amount: number;
+  /** Средневзвешенный курс покупки этого остатка (0 — если неизвестен). */
+  avgRate: number;
+  /** amount * avgRate — сколько тенге вложено в этот остаток. */
+  costKzt: number;
+}
+
+export interface CashSheetData {
+  /** Сделки покупки USD за смену: [сумма, курс]. */
+  usdBuys: { amount: number; rate: number }[];
+  /** Сделки продажи USD за смену: [сумма, курс]. */
+  usdSells: { amount: number; rate: number }[];
+  /** Остаток = куплено − продано. Положительный — перекупили, отрицательный —
+   * перепродали (излишек ушёл из резерва вкладчиков). */
+  ostatokUsd: number;
+  /** Курс, по которому оценивается остаток: средний курс покупки, если
+   * перекупили, средний курс продажи — если перепродали. */
+  ostatokRate: number;
+  /** Счета в тенге: положительные (мы должны) и «карыз» (нам должны). */
+  kztPlus: CashSheetAccount[];
+  kztKaryz: CashSheetAccount[];
+  /** Долларовые счета: САЛЫНГАН (мы должны) и КАРЫЗ (нам должны). */
+  usdSalyngan: CashSheetAccount[];
+  usdKaryz: CashSheetAccount[];
+  /** Остальные валюты вперемешку, разделённые на «у них есть» и «должны нам». */
+  otherPlus: CashSheetAccount[];
+  otherKaryz: CashSheetAccount[];
+  /** Итоги по валютам в кассе + средний курс покупки остатка. */
+  currencyTotals: CashSheetCurrencyTotal[];
+  /** Доход за смену (маржа обмена по себестоимости) и чистая прибыль. */
+  incomeKzt: number;
+  netProfitKzt: number;
 }
 
 const FX: Currency[] = ["USD", "EUR", "RUB", "KGS", "CNY", "GOLD"];
@@ -183,6 +228,13 @@ export function buildDailyReport(
   /** Все контакты (валютные счета) с ненулевым балансом USD/KZT — снимок
    * для отдельного листа отчёта. */
   contacts: { name: string; usdBalance: number; kztBalance: number }[] = [],
+  /** Полные балансы контактов по ВСЕМ валютам (для листа «Касса»): имя →
+   * код валюты → баланс. Знак: плюс — деньги клиента лежат у нас (мы должны),
+   * минус — карыз, клиент должен нам. */
+  contactBalances: { name: string; balances: Partial<Record<Currency, number>> }[] = [],
+  /** Средневзвешенная себестоимость остатка по валютам (из журнала покупок,
+   * тот же движок, что в «Калькуляторе дохода»): код валюты → курс. */
+  inventoryAvgRate: Partial<Record<Currency, number>> = {},
 ): DailyReportData {
   const now = new Date();
   const opening: Record<Currency, number> = {
@@ -299,6 +351,83 @@ export function buildDailyReport(
     .filter((c) => c.usdBalance !== 0 || c.kztBalance !== 0)
     .sort((a, b) => Math.abs(b.usdBalance) + Math.abs(b.kztBalance) - (Math.abs(a.usdBalance) + Math.abs(a.kztBalance)));
 
+  // --- Лист «Касса»: повторяет ручную таблицу обменника -------------------
+  const usdBuys = transactions
+    .filter((t) => t.kind === "buy" && t.currency === "USD" && (t.rate ?? 0) > 0)
+    .sort((a, b) => a.ts - b.ts)
+    .map((t) => ({ amount: t.amount, rate: t.rate as number }));
+  const usdSells = transactions
+    .filter((t) => t.kind === "sell" && t.currency === "USD" && (t.rate ?? 0) > 0)
+    .sort((a, b) => a.ts - b.ts)
+    .map((t) => ({ amount: t.amount, rate: t.rate as number }));
+
+  const usdBoughtAmt = usdBuys.reduce((n, r) => n + r.amount, 0);
+  const usdBoughtKzt = usdBuys.reduce((n, r) => n + r.amount * r.rate, 0);
+  const usdSoldAmt = usdSells.reduce((n, r) => n + r.amount, 0);
+  const usdSoldKzt = usdSells.reduce((n, r) => n + r.amount * r.rate, 0);
+  const usdAvgBuyRate = usdBoughtAmt > 0 ? usdBoughtKzt / usdBoughtAmt : 0;
+  const usdAvgSellRate = usdSoldAmt > 0 ? usdSoldKzt / usdSoldAmt : 0;
+  const ostatokUsd = usdBoughtAmt - usdSoldAmt;
+  // Курс остатка берём с той стороны, которая его и сформировала: перекупили —
+  // значит тенге ушли по курсу ПОКУПКИ; перепродали — валюта ушла из резерва
+  // по курсу ПРОДАЖИ.
+  const ostatokRate = ostatokUsd >= 0 ? usdAvgBuyRate : usdAvgSellRate;
+
+  const kztPlus: CashSheetAccount[] = [];
+  const kztKaryz: CashSheetAccount[] = [];
+  const usdSalyngan: CashSheetAccount[] = [];
+  const usdKaryz: CashSheetAccount[] = [];
+  const otherPlus: CashSheetAccount[] = [];
+  const otherKaryz: CashSheetAccount[] = [];
+  for (const c of contactBalances) {
+    for (const code of ALL) {
+      const bal = c.balances[code] ?? 0;
+      if (bal === 0) continue;
+      // Знак используем только для сортировки по колонкам — в самих колонках
+      // суммы пишем без знака, как в ручной таблице.
+      const entry: CashSheetAccount = { name: c.name, amount: Math.abs(bal), currency: code };
+      if (code === "KZT") (bal > 0 ? kztPlus : kztKaryz).push(entry);
+      else if (code === "USD") (bal > 0 ? usdSalyngan : usdKaryz).push(entry);
+      else (bal > 0 ? otherPlus : otherKaryz).push(entry);
+    }
+  }
+  const byAmountDesc = (a: CashSheetAccount, b: CashSheetAccount) => b.amount - a.amount;
+  kztPlus.sort(byAmountDesc);
+  kztKaryz.sort(byAmountDesc);
+  usdSalyngan.sort(byAmountDesc);
+  usdKaryz.sort(byAmountDesc);
+  otherPlus.sort(byAmountDesc);
+  otherKaryz.sort(byAmountDesc);
+
+  const currencyTotals: CashSheetCurrencyTotal[] = FX.filter(
+    (code) => (closing[code] ?? 0) !== 0,
+  ).map((code) => {
+    // Для USD пишем курс остатка/избытка смены (как просили), для остальных —
+    // средневзвешенную себестоимость остатка из журнала покупок.
+    const avgRate =
+      code === "USD"
+        ? ostatokRate || (inventoryAvgRate.USD ?? 0)
+        : (inventoryAvgRate[code] ?? 0);
+    const amount = closing[code] ?? 0;
+    return { currency: code, amount, avgRate, costKzt: amount * avgRate };
+  });
+
+  const cashSheet: CashSheetData = {
+    usdBuys,
+    usdSells,
+    ostatokUsd,
+    ostatokRate,
+    kztPlus,
+    kztKaryz,
+    usdSalyngan,
+    usdKaryz,
+    otherPlus,
+    otherKaryz,
+    currencyTotals,
+    incomeKzt: totalFxMarginKzt,
+    netProfitKzt,
+  };
+
   const rows = [...transactions]
     .sort((a, b) => a.ts - b.ts)
     .map((tx) => ({
@@ -343,6 +472,7 @@ export function buildDailyReport(
     peopleBalance,
     peopleMoneySpendUsd,
     contactAccounts,
+    cashSheet,
     buyRows,
     sellRows,
     personRows,
@@ -704,8 +834,328 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
 
   styleDataSheet(exp);
 
+  buildCashSheet(wb, data);
+
   const buffer = await wb.xlsx.writeBuffer();
   return buffer as ArrayBuffer;
+}
+
+/**
+ * Лист «Касса» — электронная копия ручной таблицы обменника.
+ *
+ * Структура повторяет привычный лист один в один, чтобы его можно было
+ * читать и сверять глазами без переучивания:
+ *   • сверху две колонки сделок по доллару — покупка (A:D) и продажа (F:I),
+ *     с итогом объёма, средним курсом (=сумма тенге / сумма валюты) и суммой
+ *     тенге в последней строке;
+ *   • ниже «Остаток» = куплено − продано: без знака, если перекупили, и с
+ *     минусом, если перепродали (излишек ушёл из резерва вкладчиков);
+ *   • ниже блок счетов: тенге (у кого лежит / карыз), доллар (САЛЫНГАН /
+ *     КАРЫЗ), иные валюты (есть / должны нам), у каждой колонки — сумма внизу;
+ *   • справа итоги по валютам в кассе со средним курсом покупки остатка —
+ *     это и есть ответ на вопрос «сколько денег вкладчиков во что вложено»;
+ *   • в самом низу справа — доход за смену и чистая прибыль.
+ *
+ * Суммы и средние курсы записаны формулами (SUM / деление), а не готовыми
+ * числами — так лист остаётся живым: можно поправить строку руками, и итоги
+ * пересчитаются сами, как в исходной таблице.
+ */
+function buildCashSheet(wb: ExcelJS.Workbook, data: DailyReportData) {
+  const cs = data.cashSheet;
+  const ws = wb.addWorksheet("Касса", {
+    views: [{ state: "frozen", ySplit: 1 }],
+  });
+
+  ws.columns = [
+    { width: 16 }, // A  покупка: сумма
+    { width: 11 }, // B  покупка: курс
+    { width: 18 }, // C  покупка: тенге
+    { width: 3 }, // D  разделитель
+    { width: 16 }, // E  продажа: сумма
+    { width: 11 }, // F  продажа: курс
+    { width: 18 }, // G  продажа: тенге
+    { width: 3 }, // H  разделитель
+    { width: 20 }, // I  тенге плюс: имя
+    { width: 16 }, // J  тенге плюс: сумма
+    { width: 20 }, // K  тенге карыз: имя
+    { width: 16 }, // L  тенге карыз: сумма
+    { width: 3 }, // M  разделитель
+    { width: 20 }, // N  САЛЫНГАН: имя
+    { width: 14 }, // O  САЛЫНГАН: сумма
+    { width: 20 }, // P  доллар КАРЫЗ: имя
+    { width: 14 }, // Q  доллар КАРЫЗ: сумма
+    { width: 3 }, // R  разделитель
+    { width: 20 }, // S  иные валюты (есть): имя
+    { width: 8 }, //  T  иные валюты (есть): валюта
+    { width: 15 }, // U  иные валюты (есть): сумма
+    { width: 20 }, // V  иные валюты (карыз): имя
+    { width: 8 }, //  W  иные валюты (карыз): валюта
+    { width: 15 }, // X  иные валюты (карыз): сумма
+    { width: 3 }, //  Y  разделитель
+    { width: 12 }, // Z  итог: валюта
+    { width: 16 }, // AA итог: остаток
+    { width: 13 }, // AB итог: ср. курс покупки
+    { width: 18 }, // AC итог: вложено тенге
+  ];
+
+  const cell = (addr: string, value: ExcelJS.CellValue, opts?: {
+    bold?: boolean;
+    numFmt?: string;
+    fill?: ExcelJS.Fill;
+    color?: string;
+  }) => {
+    const c = ws.getCell(addr);
+    c.value = value;
+    if (opts?.bold || opts?.color) {
+      c.font = { bold: opts?.bold ?? false, color: opts?.color ? { argb: opts.color } : undefined };
+    }
+    if (opts?.numFmt) c.numFmt = opts.numFmt;
+    if (opts?.fill) c.fill = opts.fill;
+    return c;
+  };
+
+  const MONEY = "#,##0.00";
+  const RATE = "#,##0.0000";
+  const RED = "FFB91C1C";
+
+  // --- Заголовок ---------------------------------------------------------
+  ws.mergeCells("A1:G1");
+  cell("A1", `Касса — ${data.dateTitle}`, { bold: true });
+  ws.getCell("A1").font = { size: 14, bold: true, color: { argb: "FF1E3A5F" } };
+  ws.getCell("A1").alignment = { horizontal: "center" };
+
+  // --- Сделки по доллару -------------------------------------------------
+  const TRADE_HEAD = 3;
+  const TRADE_START = TRADE_HEAD + 1;
+  cell("A2", "ПОКУПКА ДОЛЛАРА", { bold: true });
+  cell("E2", "ПРОДАЖА ДОЛЛАРА", { bold: true });
+  styleHeaderRow(
+    ws.getRow(TRADE_HEAD),
+  );
+  cell(`A${TRADE_HEAD}`, "Сумма $", { bold: true });
+  cell(`B${TRADE_HEAD}`, "Курс", { bold: true });
+  cell(`C${TRADE_HEAD}`, "Тенге", { bold: true });
+  cell(`E${TRADE_HEAD}`, "Сумма $", { bold: true });
+  cell(`F${TRADE_HEAD}`, "Курс", { bold: true });
+  cell(`G${TRADE_HEAD}`, "Тенге", { bold: true });
+
+  const tradeCount = Math.max(cs.usdBuys.length, cs.usdSells.length, 1);
+  for (let i = 0; i < tradeCount; i++) {
+    const rowNo = TRADE_START + i;
+    const buy = cs.usdBuys[i];
+    const sell = cs.usdSells[i];
+    if (buy) {
+      cell(`A${rowNo}`, buy.amount, { numFmt: MONEY });
+      cell(`B${rowNo}`, buy.rate, { numFmt: RATE });
+      cell(`C${rowNo}`, { formula: `A${rowNo}*B${rowNo}` }, { numFmt: MONEY });
+    }
+    if (sell) {
+      cell(`E${rowNo}`, sell.amount, { numFmt: MONEY });
+      cell(`F${rowNo}`, sell.rate, { numFmt: RATE });
+      cell(`G${rowNo}`, { formula: `E${rowNo}*F${rowNo}` }, { numFmt: MONEY });
+    }
+  }
+
+  // Итоговая строка: объём, средний курс (тенге / объём) и сумма тенге —
+  // ровно те же формулы, что в ручной таблице.
+  const TRADE_END = TRADE_START + tradeCount - 1;
+  const totalRow = TRADE_END + 1;
+  cell(`A${totalRow}`, { formula: `SUM(A${TRADE_START}:A${TRADE_END})` }, {
+    bold: true,
+    numFmt: MONEY,
+    fill: ACCENT_FILL,
+  });
+  cell(
+    `B${totalRow}`,
+    { formula: `IF(A${totalRow}=0,0,C${totalRow}/A${totalRow})` },
+    { bold: true, numFmt: RATE, fill: ACCENT_FILL },
+  );
+  cell(`C${totalRow}`, { formula: `SUM(C${TRADE_START}:C${TRADE_END})` }, {
+    bold: true,
+    numFmt: MONEY,
+    fill: ACCENT_FILL,
+  });
+  cell(`E${totalRow}`, { formula: `SUM(E${TRADE_START}:E${TRADE_END})` }, {
+    bold: true,
+    numFmt: MONEY,
+    fill: ACCENT_FILL,
+  });
+  cell(
+    `F${totalRow}`,
+    { formula: `IF(E${totalRow}=0,0,G${totalRow}/E${totalRow})` },
+    { bold: true, numFmt: RATE, fill: ACCENT_FILL },
+  );
+  cell(`G${totalRow}`, { formula: `SUM(G${TRADE_START}:G${TRADE_END})` }, {
+    bold: true,
+    numFmt: MONEY,
+    fill: ACCENT_FILL,
+  });
+
+  // --- Остаток -----------------------------------------------------------
+  const ostRow = totalRow + 2;
+  cell(`A${ostRow}`, "Остаток", { bold: true });
+  // Куплено − продано. Знак несёт смысл: плюс — перекупили (тенге вложены в
+  // валюту), минус — перепродали (валюта ушла из резерва вкладчиков).
+  cell(`B${ostRow}`, { formula: `A${totalRow}-E${totalRow}` }, {
+    bold: true,
+    numFmt: MONEY,
+    color: cs.ostatokUsd < 0 ? RED : undefined,
+  });
+  // Курс остатка тоже формулой, а не числом: если поправить строку сделки
+  // руками, остаток и его курс пересчитаются сами — как в ручной таблице.
+  cell(
+    `C${ostRow}`,
+    { formula: `IF(B${ostRow}>=0,B${totalRow},F${totalRow})` },
+    { bold: true, numFmt: RATE },
+  );
+  cell(`E${ostRow}`, cs.ostatokUsd >= 0 ? "перекупили (закуп)" : "перепродали (из резерва)", {
+    color: cs.ostatokUsd < 0 ? RED : undefined,
+  });
+  cell(`F${ostRow}`, { formula: `B${ostRow}*C${ostRow}` }, { bold: true, numFmt: MONEY });
+  cell(`G${ostRow}`, "тенге по остатку");
+
+  // --- Блок счетов -------------------------------------------------------
+  const ACC_HEAD = ostRow + 3;
+  const ACC_START = ACC_HEAD + 1;
+  cell(`I${ACC_HEAD}`, "тенге — плюс", { bold: true });
+  cell(`J${ACC_HEAD}`, "сумма", { bold: true });
+  cell(`K${ACC_HEAD}`, "тенге — карыз", { bold: true });
+  cell(`L${ACC_HEAD}`, "сумма", { bold: true });
+  cell(`N${ACC_HEAD}`, "САЛЫНГАН ($)", { bold: true });
+  cell(`O${ACC_HEAD}`, "сумма", { bold: true });
+  cell(`P${ACC_HEAD}`, "КАРЫЗ ($)", { bold: true });
+  cell(`Q${ACC_HEAD}`, "сумма", { bold: true });
+  cell(`S${ACC_HEAD}`, "иные валюты — есть", { bold: true });
+  cell(`T${ACC_HEAD}`, "вал.", { bold: true });
+  cell(`U${ACC_HEAD}`, "сумма", { bold: true });
+  cell(`V${ACC_HEAD}`, "иные валюты — карыз", { bold: true });
+  cell(`W${ACC_HEAD}`, "вал.", { bold: true });
+  cell(`X${ACC_HEAD}`, "сумма", { bold: true });
+  styleHeaderRow(ws.getRow(ACC_HEAD));
+
+  const writeAccounts = (
+    list: CashSheetAccount[],
+    nameCol: string,
+    amountCol: string,
+    currencyCol?: string,
+  ) => {
+    list.forEach((acc, i) => {
+      const rowNo = ACC_START + i;
+      cell(`${nameCol}${rowNo}`, acc.name);
+      if (currencyCol) cell(`${currencyCol}${rowNo}`, acc.currency);
+      cell(`${amountCol}${rowNo}`, acc.amount, {
+        numFmt: acc.currency === "GOLD" ? "#,##0.000" : MONEY,
+      });
+    });
+  };
+  writeAccounts(cs.kztPlus, "I", "J");
+  writeAccounts(cs.kztKaryz, "K", "L");
+  writeAccounts(cs.usdSalyngan, "N", "O");
+  writeAccounts(cs.usdKaryz, "P", "Q");
+  // Иные валюты идут вперемешку в одной колонке, поэтому у них есть отдельная
+  // колонка кода валюты — по ней же считаются подытоги (складывать EUR с
+  // золотом в одно число бессмысленно).
+  writeAccounts(cs.otherPlus, "S", "U", "T");
+  writeAccounts(cs.otherKaryz, "V", "X", "W");
+
+  const accLen = Math.max(
+    cs.kztPlus.length,
+    cs.kztKaryz.length,
+    cs.usdSalyngan.length,
+    cs.usdKaryz.length,
+    cs.otherPlus.length,
+    cs.otherKaryz.length,
+    1,
+  );
+  const ACC_END = ACC_START + accLen - 1;
+  const accTotalRow = ACC_END + 1;
+  for (const col of ["J", "L", "O", "Q"]) {
+    cell(
+      `${col}${accTotalRow}`,
+      { formula: `SUM(${col}${ACC_START}:${col}${ACC_END})` },
+      { bold: true, numFmt: MONEY, fill: ACCENT_FILL },
+    );
+  }
+  cell(`I${accTotalRow}`, "ИТОГО", { bold: true });
+  cell(`K${accTotalRow}`, "ИТОГО", { bold: true });
+  cell(`N${accTotalRow}`, "ИТОГО", { bold: true });
+  cell(`P${accTotalRow}`, "ИТОГО", { bold: true });
+
+  // Иные валюты: подытог отдельной строкой на КАЖДУЮ валюту (SUMIF по коду),
+  // а не одной суммой — иначе в итоге сложились бы евро с граммами золота.
+  const otherCodes = [
+    ...new Set([...cs.otherPlus, ...cs.otherKaryz].map((a) => a.currency)),
+  ].sort();
+  otherCodes.forEach((code, i) => {
+    const rowNo = accTotalRow + i;
+    cell(`S${rowNo}`, `ИТОГО ${code}`, { bold: true });
+    cell(
+      `U${rowNo}`,
+      { formula: `SUMIF(T${ACC_START}:T${ACC_END},"${code}",U${ACC_START}:U${ACC_END})` },
+      { bold: true, numFmt: code === "GOLD" ? "#,##0.000" : MONEY, fill: ACCENT_FILL },
+    );
+    cell(`V${rowNo}`, `ИТОГО ${code}`, { bold: true });
+    cell(
+      `X${rowNo}`,
+      { formula: `SUMIF(W${ACC_START}:W${ACC_END},"${code}",X${ACC_START}:X${ACC_END})` },
+      { bold: true, numFmt: code === "GOLD" ? "#,##0.000" : MONEY, fill: ACCENT_FILL },
+    );
+  });
+
+  // Разница «лежит у нас» − «должны нам» по тенге и доллару.
+  const diffRow = accTotalRow + 1;
+  cell(`I${diffRow}`, "Разница (тенге)", { bold: true });
+  cell(`J${diffRow}`, { formula: `J${accTotalRow}-L${accTotalRow}` }, {
+    bold: true,
+    numFmt: MONEY,
+  });
+  cell(`N${diffRow}`, "Разница ($)", { bold: true });
+  cell(`O${diffRow}`, { formula: `O${accTotalRow}-Q${accTotalRow}` }, {
+    bold: true,
+    numFmt: MONEY,
+  });
+
+  // --- Итоги по валютам в кассе -----------------------------------------
+  const CUR_HEAD = ACC_HEAD;
+  cell(`Z${CUR_HEAD}`, "Валюта", { bold: true });
+  cell(`AA${CUR_HEAD}`, "Остаток", { bold: true });
+  cell(`AB${CUR_HEAD}`, "Ср. курс покупки", { bold: true });
+  cell(`AC${CUR_HEAD}`, "Вложено ₸", { bold: true });
+
+  const curStart = CUR_HEAD + 1;
+  cs.currencyTotals.forEach((t, i) => {
+    const rowNo = curStart + i;
+    cell(`Z${rowNo}`, t.currency, { bold: true });
+    cell(`AA${rowNo}`, t.amount, { numFmt: t.currency === "GOLD" ? "#,##0.000" : MONEY });
+    cell(`AB${rowNo}`, t.avgRate, { numFmt: RATE });
+    cell(`AC${rowNo}`, { formula: `AA${rowNo}*AB${rowNo}` }, { numFmt: MONEY });
+  });
+  const curEnd = curStart + Math.max(cs.currencyTotals.length, 1) - 1;
+  const curTotalRow = curEnd + 1;
+  cell(`Z${curTotalRow}`, "ИТОГО ₸", { bold: true });
+  cell(`AC${curTotalRow}`, { formula: `SUM(AC${curStart}:AC${curEnd})` }, {
+    bold: true,
+    numFmt: MONEY,
+    fill: ACCENT_FILL,
+  });
+
+  // --- Доход и прибыль ---------------------------------------------------
+  const incomeRow = curTotalRow + 2;
+  cell(`Z${incomeRow}`, "Доход за смену ₸", { bold: true });
+  cell(`AC${incomeRow}`, cs.incomeKzt, {
+    bold: true,
+    numFmt: MONEY,
+    fill: ACCENT_FILL,
+    color: cs.incomeKzt < 0 ? RED : undefined,
+  });
+  const profitRow = incomeRow + 1;
+  cell(`Z${profitRow}`, "Чистая прибыль ₸", { bold: true });
+  cell(`AC${profitRow}`, cs.netProfitKzt, {
+    bold: true,
+    numFmt: MONEY,
+    fill: cs.netProfitKzt < 0 ? WARN_FILL : ACCENT_FILL,
+    color: cs.netProfitKzt < 0 ? RED : undefined,
+  });
 }
 
 export function downloadExcelBuffer(buffer: ArrayBuffer, fileBaseName: string) {

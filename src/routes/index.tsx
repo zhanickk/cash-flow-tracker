@@ -87,7 +87,7 @@ import {
 import { useFxPurchases } from "@/lib/fx-purchases";
 import { useFxCurrencies, useFxSales } from "@/lib/fx-sales";
 import { computeSessionExcessByCurrency, txsToFxOps } from "@/lib/fx-people-money-spend";
-import { buildIncomeSummary } from "@/lib/income-calculator";
+import { buildIncomeSummary, computeInventoryCostBasis } from "@/lib/income-calculator";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
 import { LogOut } from "lucide-react";
@@ -487,7 +487,27 @@ function Index() {
           kztBalance: c.balances.KZT ?? 0,
         }))
         .filter((c) => c.usdBalance !== 0 || c.kztBalance !== 0);
-      const data = buildDailyReport(transactions, totals, weightedAvg, reportDate, contactAccounts);
+      // Лист «Касса» показывает счета по ВСЕМ валютам, а не только USD/KZT —
+      // поэтому отдаём полные балансы, а не сокращённый снимок выше.
+      const contactBalances = contactsWithBalances
+        .map((c) => ({ name: c.name, balances: c.balances }))
+        .filter((c) => Object.values(c.balances).some((v) => (v ?? 0) !== 0));
+      // Средневзвешенная себестоимость остатка по валютам — «сколько денег
+      // вкладчиков вложено в то, что сейчас лежит в кассе».
+      const inventory = computeInventoryCostBasis(fxPurchasesAll, fxSalesAll);
+      const inventoryAvgRate: Partial<Record<Currency, number>> = {};
+      for (const [code, basis] of Object.entries(inventory)) {
+        inventoryAvgRate[code as Currency] = basis.avgRate;
+      }
+      const data = buildDailyReport(
+        transactions,
+        totals,
+        weightedAvg,
+        reportDate,
+        contactAccounts,
+        contactBalances,
+        inventoryAvgRate,
+      );
       const buffer = await buildReportWorkbook(data);
       setReportData(data);
       setReportExcel(buffer);
