@@ -135,7 +135,7 @@ function emptyDay(dateKey: string, currency: string): PeopleMoneySpendDay {
   };
 }
 
-function buildDayRow(
+export function buildDayRow(
   dateKey: string,
   currency: string,
   buys: CashFxOp[],
@@ -243,6 +243,51 @@ export function computePeopleMoneySpendByCurrency(
   const result: Record<string, PeopleMoneySpendReport> = {};
   for (const [currency, currencyOps] of byCurrency) {
     result[currency] = computePeopleMoneySpend(currencyOps, now);
+  }
+  return result;
+}
+
+/** Как cashRowsToFxOps, но из уже загруженных в память Transaction (не сырых
+ * строк Supabase) — для мест, где данные сессии уже есть в state (отчёт,
+ * "Новый день"), без лишнего похода в базу. */
+export function txsToFxOps(
+  txs: { id: string; kind: string; ts: number; currency: string; amount: number; rate?: number; name?: string }[],
+): CashFxOp[] {
+  return txs
+    .filter((t) => t.currency !== "KZT" && (t.kind === "buy" || t.kind === "sell"))
+    .map((t) => {
+      const rate = t.rate ?? 0;
+      return {
+        id: t.id,
+        currency: t.currency,
+        occurredAt: t.ts,
+        kind: t.kind as "buy" | "sell",
+        foreignAmount: t.amount,
+        rate,
+        kztAmount: t.amount * rate,
+        note: t.name,
+      };
+    });
+}
+
+/** Итог по каждой валюте за ПРОИЗВОЛЬНЫЙ набор операций, без разбивки по
+ * календарным дням — используется при "Новый день", чтобы посчитать
+ * излишек-закуп/трату из резерва за только что закончившуюся сессию
+ * целиком (сессия может охватывать больше одного календарного дня, если
+ * "Новый день" вовремя не нажимали). */
+export function computeSessionExcessByCurrency(
+  ops: CashFxOp[],
+): Record<string, PeopleMoneySpendDay> {
+  const byCurrency = new Map<string, { buys: CashFxOp[]; sells: CashFxOp[] }>();
+  for (const op of ops) {
+    const bucket = byCurrency.get(op.currency) ?? { buys: [], sells: [] };
+    if (op.kind === "buy") bucket.buys.push(op);
+    else bucket.sells.push(op);
+    byCurrency.set(op.currency, bucket);
+  }
+  const result: Record<string, PeopleMoneySpendDay> = {};
+  for (const [currency, { buys, sells }] of byCurrency) {
+    result[currency] = buildDayRow("session", currency, buys, sells);
   }
   return result;
 }

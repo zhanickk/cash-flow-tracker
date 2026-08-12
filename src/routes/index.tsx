@@ -86,6 +86,7 @@ import {
 } from "@/lib/payroll";
 import { useFxPurchases } from "@/lib/fx-purchases";
 import { useFxCurrencies, useFxSales } from "@/lib/fx-sales";
+import { computeSessionExcessByCurrency, txsToFxOps } from "@/lib/fx-people-money-spend";
 import { buildIncomeSummary } from "@/lib/income-calculator";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
@@ -540,7 +541,20 @@ function Index() {
       currency: c.code,
       amount: totals[c.code],
     }));
-    newDayCashRegister.mutate(openings);
+    // "Трата Жұрттың ақшасы" за уходящую сессию целиком (не по календарному
+    // дню — сессия могла тянуться дольше суток): валюты, где купили больше,
+    // чем продали, — излишек и его средний курс покупки записываются в
+    // fx_purchases автоматически, чтобы с завтрашнего дня Калькулятор дохода
+    // не считал этот остаток "без себестоимости".
+    const sessionExcess = computeSessionExcessByCurrency(txsToFxOps(transactions));
+    const excessBuys = Object.values(sessionExcess)
+      .filter((row) => row.direction === "excess_buy" && row.excessAmt > 0 && row.avgRate > 0)
+      .map((row) => ({
+        currencyCode: row.currency,
+        foreignAmount: row.excessAmt,
+        rate: row.avgRate,
+      }));
+    newDayCashRegister.mutate({ openings, excessBuys });
     localStorage.removeItem(REPORT_DONE_KEY);
     setReportDoneToday(false);
     setNewDayOpen(false);

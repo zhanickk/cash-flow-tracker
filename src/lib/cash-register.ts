@@ -9,6 +9,7 @@ import {
   syncFxSaleUpdateFromCashTx,
 } from "@/lib/fx-sales";
 import {
+  recordFxPurchase,
   syncFxPurchaseDeleteFromCashTx,
   syncFxPurchaseFromCashTx,
   syncFxPurchaseUpdateFromCashTx,
@@ -359,7 +360,20 @@ export function useResetCashRegister() {
 export function useNewDayCashRegister() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (openings: Transaction[]) => {
+    mutationFn: async ({
+      openings,
+      excessBuys = [],
+    }: {
+      openings: Transaction[];
+      /** Валюты, где за уходящую сессию купили больше, чем продали (излишек-
+       * закуп из "Трата Жұрттың ақшасы") — себестоимость этого излишка
+       * записывается в fx_purchases автоматически, чтобы Калькулятор дохода
+       * с завтрашнего дня считал его не "без себестоимости" (0 маржи), а по
+       * реальному среднему курсу покупки. Раньше это приходилось делать
+       * вручную по просьбе пользователя — теперь модуль "Трата Жұрттың
+       * ақшасы" и создан для этого: считает сам каждый раз при "Новый день". */
+      excessBuys?: { currencyCode: string; foreignAmount: number; rate: number }[];
+    }) => {
       const { error: delErr } = await supabase
         .from("cash_transactions")
         .delete()
@@ -377,9 +391,22 @@ export function useNewDayCashRegister() {
         );
         if (insErr) throw insErr;
       }
+      const occurredAt = new Date().toISOString();
+      for (const eb of excessBuys) {
+        if (eb.foreignAmount <= 0 || eb.rate <= 0) continue;
+        await recordFxPurchase({
+          currencyCode: eb.currencyCode,
+          foreignAmount: eb.foreignAmount,
+          rate: eb.rate,
+          occurredAt,
+          note: "Остаток на начало дня (излишек-закуп, авто из «Трата Жұрттың ақшасы»)",
+        });
+      }
       await insertHistory({
         action: "reset",
-        summary: `НОВЫЙ ДЕНЬ — остатки перенесены (${openings.length} валют)`,
+        summary: `НОВЫЙ ДЕНЬ — остатки перенесены (${openings.length} валют)${
+          excessBuys.length > 0 ? `, себестоимость излишка записана (${excessBuys.length})` : ""
+        }`,
       });
     },
     onSuccess: () => {
