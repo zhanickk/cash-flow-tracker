@@ -554,7 +554,11 @@ function Index() {
         foreignAmount: row.excessAmt,
         rate: row.avgRate,
       }));
-    newDayCashRegister.mutate({ openings, excessBuys });
+    // Полный итог по обеим направлениям сохраняется в постоянный журнал —
+    // иначе история "Трата Жұрттың ақшасы" терялась бы вместе со сбросом
+    // cash_transactions.
+    const spendLog = Object.values(sessionExcess);
+    newDayCashRegister.mutate({ openings, excessBuys, spendLog, sessionStart: sessionFromTs });
     localStorage.removeItem(REPORT_DONE_KEY);
     setReportDoneToday(false);
     setNewDayOpen(false);

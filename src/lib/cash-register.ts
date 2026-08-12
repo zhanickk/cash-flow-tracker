@@ -20,6 +20,8 @@ import {
   syncExpenseUpdateFromCashTx,
 } from "@/lib/expenses";
 import { getCachedCashierName } from "@/lib/auth";
+import { recordMoneySpendLog } from "@/lib/people-money-spend-log";
+import type { PeopleMoneySpendDay } from "@/lib/fx-people-money-spend";
 
 export type CashTxRow = Tables<"cash_transactions">;
 export type CashHistoryRow = Tables<"cash_register_history">;
@@ -363,6 +365,8 @@ export function useNewDayCashRegister() {
     mutationFn: async ({
       openings,
       excessBuys = [],
+      spendLog = [],
+      sessionStart,
     }: {
       openings: Transaction[];
       /** Валюты, где за уходящую сессию купили больше, чем продали (излишек-
@@ -373,6 +377,12 @@ export function useNewDayCashRegister() {
        * вручную по просьбе пользователя — теперь модуль "Трата Жұрттың
        * ақшасы" и создан для этого: считает сам каждый раз при "Новый день". */
       excessBuys?: { currencyCode: string; foreignAmount: number; rate: number }[];
+      /** Полный итог "Трата Жұрттың ақшасы" по каждой валюте за уходящую
+       * сессию (оба направления) — пишется в постоянный журнал
+       * people_money_spend_log, чтобы история страницы не терялась при
+       * сбросе cash_transactions. */
+      spendLog?: PeopleMoneySpendDay[];
+      sessionStart: number;
     }) => {
       const { error: delErr } = await supabase
         .from("cash_transactions")
@@ -391,7 +401,8 @@ export function useNewDayCashRegister() {
         );
         if (insErr) throw insErr;
       }
-      const occurredAt = new Date().toISOString();
+      const now = Date.now();
+      const occurredAt = new Date(now).toISOString();
       for (const eb of excessBuys) {
         if (eb.foreignAmount <= 0 || eb.rate <= 0) continue;
         await recordFxPurchase({
@@ -402,6 +413,7 @@ export function useNewDayCashRegister() {
           note: "Остаток на начало дня (излишек-закуп, авто из «Трата Жұрттың ақшасы»)",
         });
       }
+      await recordMoneySpendLog(sessionStart, now, spendLog, getCachedCashierName());
       await insertHistory({
         action: "reset",
         summary: `НОВЫЙ ДЕНЬ — остатки перенесены (${openings.length} валют)${
@@ -416,6 +428,7 @@ export function useNewDayCashRegister() {
       qc.invalidateQueries({ queryKey: ["fx-purchases"] });
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["fx-currency-holdings"] });
+      qc.invalidateQueries({ queryKey: ["people-money-spend-log"] });
     },
   });
 }

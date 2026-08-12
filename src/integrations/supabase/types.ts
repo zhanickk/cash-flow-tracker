@@ -613,6 +613,57 @@ export type Database = {
         }
         Relationships: []
       }
+      people_money_spend_log: {
+        Row: {
+          avg_buy_rate: number
+          avg_rate: number
+          avg_sell_rate: number
+          bought_amount: number
+          cashier_name: string | null
+          created_at: string
+          currency_code: string
+          direction: string
+          excess_amount: number
+          id: string
+          session_end: string
+          session_start: string
+          sold_amount: number
+          spend_kzt: number
+        }
+        Insert: {
+          avg_buy_rate?: number
+          avg_rate?: number
+          avg_sell_rate?: number
+          bought_amount?: number
+          cashier_name?: string | null
+          created_at?: string
+          currency_code: string
+          direction?: string
+          excess_amount?: number
+          id?: string
+          session_end: string
+          session_start: string
+          sold_amount?: number
+          spend_kzt?: number
+        }
+        Update: {
+          avg_buy_rate?: number
+          avg_rate?: number
+          avg_sell_rate?: number
+          bought_amount?: number
+          cashier_name?: string | null
+          created_at?: string
+          currency_code?: string
+          direction?: string
+          excess_amount?: number
+          id?: string
+          session_end?: string
+          session_start?: string
+          sold_amount?: number
+          spend_kzt?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

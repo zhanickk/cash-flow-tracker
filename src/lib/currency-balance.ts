@@ -12,11 +12,8 @@ import {
   type ContactTx,
 } from "@/lib/fx-pots";
 import { cashRowsToMappedSales } from "@/lib/fx-sale-map";
-import {
-  cashRowsToFxOps,
-  computePeopleMoneySpendByCurrency,
-  type PeopleMoneySpendReport,
-} from "@/lib/fx-people-money-spend";
+import { cashRowsToFxOps, type PeopleMoneySpendReport } from "@/lib/fx-people-money-spend";
+import { buildMergedPeopleMoneySpendReports, rowToEntry as moneySpendLogRowToEntry } from "@/lib/people-money-spend-log";
 
 export interface CurrencyHoldingCard {
   currencyCode: string;
@@ -186,6 +183,7 @@ export function useCurrencyHoldings() {
         contactTxs,
         { data: sellRows, error: tErr },
         { data: fxRows, error: uErr },
+        moneySpendLogRows,
       ] = await Promise.all([
         supabase.from("fx_currencies").select("*").eq("is_active", true).order("sort_order"),
         fetchAllRows((from, to) => supabase.from("contact_transactions").select("*").range(from, to)),
@@ -196,14 +194,26 @@ export function useCurrencyHoldings() {
           .neq("currency", "KZT")
           .in("kind", ["buy", "sell"])
           .order("ts", { ascending: false }),
+        fetchAllRows((from, to) =>
+          supabase
+            .from("people_money_spend_log")
+            .select("*")
+            .order("session_start", { ascending: false })
+            .range(from, to),
+        ),
       ]);
       if (cErr) throw cErr;
       if (tErr) throw tErr;
       if (uErr) throw uErr;
 
       const sales = cashRowsToMappedSales(sellRows ?? []);
-      const peopleMoneySpendByCurrency = computePeopleMoneySpendByCurrency(
+      // Живая (ещё не закрытая) сессия из cash_transactions + постоянный
+      // журнал прошлых сессий (people_money_spend_log, не стирается при
+      // "Новый день") — иначе история "Трата Жұрттың ақшасы" пропадала бы
+      // каждый раз при сбросе кассы.
+      const peopleMoneySpendByCurrency = buildMergedPeopleMoneySpendReports(
         cashRowsToFxOps(fxRows ?? []),
+        moneySpendLogRows.map(moneySpendLogRowToEntry),
       );
 
       return {
