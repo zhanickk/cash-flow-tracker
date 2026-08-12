@@ -839,226 +839,227 @@ export async function buildReportWorkbook(data: DailyReportData): Promise<ArrayB
   const buffer = await wb.xlsx.writeBuffer();
   return buffer as ArrayBuffer;
 }
-
 /**
- * Лист «Касса» — электронная копия ручной таблицы обменника.
+ * Лист «Касса» — электронная копия ручного листа обменника (последний лист
+ * рабочей книги «Новая таблица»), повторённая один в один: та же раскладка по
+ * колонкам, те же цвета, шрифт Arial 10, те же форматы чисел и формулы.
  *
- * Структура повторяет привычный лист один в один, чтобы его можно было
- * читать и сверять глазами без переучивания:
- *   • сверху две колонки сделок по доллару — покупка (A:D) и продажа (F:I),
- *     с итогом объёма, средним курсом (=сумма тенге / сумма валюты) и суммой
- *     тенге в последней строке;
- *   • ниже «Остаток» = куплено − продано: без знака, если перекупили, и с
- *     минусом, если перепродали (излишек ушёл из резерва вкладчиков);
- *   • ниже блок счетов: тенге (у кого лежит / карыз), доллар (САЛЫНГАН /
- *     КАРЫЗ), иные валюты (есть / должны нам), у каждой колонки — сумма внизу;
- *   • справа итоги по валютам в кассе со средним курсом покупки остатка —
- *     это и есть ответ на вопрос «сколько денег вкладчиков во что вложено»;
- *   • в самом низу справа — доход за смену и чистая прибыль.
+ * Раскладка (как в оригинале — блок сделок и блок счетов делят одни колонки):
+ *   B:E   покупка доллара  — сумма, курс, тенге (=сумма*курс), отметка
+ *   H:K   продажа доллара  — то же самое
+ *   строка итогов          — объём, средний курс (=тенге/объём), сумма тенге
+ *   F/G   «Остаток»        — куплено − продано и тенге по нему
+ *   A:B   тенге «плюс»     — у кого лежат наши тенге
+ *   D:E   тенге «минус»    — карыз, кто должен нам тенге
+ *   G:H   САЛЫНГАН ($)     — зелёная подпись имени, как в оригинале
+ *   J:K   КАРЫЗ ($)        — розовая подпись имени
+ * Добавлено сверх оригинала (по просьбе — раньше велось текстом вручную):
+ *   M:O   иные валюты, у кого лежат      (имя, код валюты, сумма)
+ *   P:R   иные валюты, карыз             (имя, код валюты, сумма)
+ *   T:W   остатки валют в кассе, средний курс покупки и вложено тенге
+ *         + доход за смену и чистая прибыль под ними
  *
- * Суммы и средние курсы записаны формулами (SUM / деление), а не готовыми
- * числами — так лист остаётся живым: можно поправить строку руками, и итоги
- * пересчитаются сами, как в исходной таблице.
+ * Всё, что в оригинале было формулой, остаётся формулой (SUM / SUMIF /
+ * деление): лист живой — поправив строку руками, получаешь пересчитанные
+ * итоги, а не рассинхрон с числом, вбитым программой.
  */
 function buildCashSheet(wb: ExcelJS.Workbook, data: DailyReportData) {
   const cs = data.cashSheet;
-  const ws = wb.addWorksheet("Касса", {
-    views: [{ state: "frozen", ySplit: 1 }],
+  const ws = wb.addWorksheet("Касса");
+
+  // --- Палитра и форматы — сняты пипеткой с оригинального листа ----------
+  const C_RATE = "FFE6B8AF"; // курс в строке сделки
+  const C_TOTAL = "FFF9CB9C"; // строка итогов по сделкам
+  const C_OST = "FFFFF2CC"; // остаток (валюта)
+  const C_OST2 = "FFFFE599"; // остаток (тенге)
+  const C_SUM = "FFFBBC04"; // итоги по колонкам счетов
+  const C_WHITE = "FFFFFFFF";
+  const C_SALYNGAN = "FF34A853"; // имя в САЛЫНГАН
+  const C_KARYZ = "FFD5A6BD"; // имя в КАРЫЗ
+  const NF_KZT = "#,##0";
+  const NF_USD = '"$"#,##0';
+  const NF_RATE = "0.000";
+  const NF_GOLD = "#,##0.000";
+
+  const ARIAL = (opts?: { bold?: boolean; size?: number }) => ({
+    name: "Arial",
+    size: opts?.size ?? 10,
+    bold: opts?.bold ?? false,
+    color: { argb: "FF000000" },
   });
+  const solid = (argb: string): ExcelJS.Fill => ({
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb },
+  });
+  const THIN: Partial<ExcelJS.Borders> = {
+    top: { style: "thin" },
+    left: { style: "thin" },
+    bottom: { style: "thin" },
+    right: { style: "thin" },
+  };
+  const MEDIUM: Partial<ExcelJS.Borders> = {
+    top: { style: "medium" },
+    left: { style: "medium" },
+    bottom: { style: "medium" },
+    right: { style: "medium" },
+  };
 
-  ws.columns = [
-    { width: 16 }, // A  покупка: сумма
-    { width: 11 }, // B  покупка: курс
-    { width: 18 }, // C  покупка: тенге
-    { width: 3 }, // D  разделитель
-    { width: 16 }, // E  продажа: сумма
-    { width: 11 }, // F  продажа: курс
-    { width: 18 }, // G  продажа: тенге
-    { width: 3 }, // H  разделитель
-    { width: 20 }, // I  тенге плюс: имя
-    { width: 16 }, // J  тенге плюс: сумма
-    { width: 20 }, // K  тенге карыз: имя
-    { width: 16 }, // L  тенге карыз: сумма
-    { width: 3 }, // M  разделитель
-    { width: 20 }, // N  САЛЫНГАН: имя
-    { width: 14 }, // O  САЛЫНГАН: сумма
-    { width: 20 }, // P  доллар КАРЫЗ: имя
-    { width: 14 }, // Q  доллар КАРЫЗ: сумма
-    { width: 3 }, // R  разделитель
-    { width: 20 }, // S  иные валюты (есть): имя
-    { width: 8 }, //  T  иные валюты (есть): валюта
-    { width: 15 }, // U  иные валюты (есть): сумма
-    { width: 20 }, // V  иные валюты (карыз): имя
-    { width: 8 }, //  W  иные валюты (карыз): валюта
-    { width: 15 }, // X  иные валюты (карыз): сумма
-    { width: 3 }, //  Y  разделитель
-    { width: 12 }, // Z  итог: валюта
-    { width: 16 }, // AA итог: остаток
-    { width: 13 }, // AB итог: ср. курс покупки
-    { width: 18 }, // AC итог: вложено тенге
-  ];
-
-  const cell = (addr: string, value: ExcelJS.CellValue, opts?: {
-    bold?: boolean;
+  interface CellOpts {
+    fill?: string;
     numFmt?: string;
-    fill?: ExcelJS.Fill;
-    color?: string;
-  }) => {
+    bold?: boolean;
+    size?: number;
+    border?: Partial<ExcelJS.Borders>;
+    align?: "left" | "center" | "right";
+  }
+  const put = (addr: string, value: ExcelJS.CellValue, o: CellOpts = {}) => {
     const c = ws.getCell(addr);
     c.value = value;
-    if (opts?.bold || opts?.color) {
-      c.font = { bold: opts?.bold ?? false, color: opts?.color ? { argb: opts.color } : undefined };
-    }
-    if (opts?.numFmt) c.numFmt = opts.numFmt;
-    if (opts?.fill) c.fill = opts.fill;
+    c.font = ARIAL({ bold: o.bold, size: o.size });
+    if (o.fill) c.fill = solid(o.fill);
+    if (o.numFmt) c.numFmt = o.numFmt;
+    if (o.border) c.border = o.border;
+    c.alignment = { horizontal: o.align ?? "right", vertical: "bottom" };
     return c;
   };
 
-  const MONEY = "#,##0.00";
-  const RATE = "#,##0.0000";
-  const RED = "FFB91C1C";
-
-  // --- Заголовок ---------------------------------------------------------
-  ws.mergeCells("A1:G1");
-  cell("A1", `Касса — ${data.dateTitle}`, { bold: true });
-  ws.getCell("A1").font = { size: 14, bold: true, color: { argb: "FF1E3A5F" } };
-  ws.getCell("A1").alignment = { horizontal: "center" };
+  // Ширины: A/D/E — ровно как в оригинале, остальным даём читаемый размер
+  // (в оригинале они по умолчанию и текст просто вылезает на соседнюю).
+  ws.getColumn("A").width = 12.63;
+  ws.getColumn("B").width = 13;
+  ws.getColumn("C").width = 9;
+  ws.getColumn("D").width = 18.38;
+  ws.getColumn("E").width = 12.63;
+  ws.getColumn("F").width = 13;
+  ws.getColumn("G").width = 15;
+  ws.getColumn("H").width = 13;
+  ws.getColumn("I").width = 9;
+  ws.getColumn("J").width = 15;
+  ws.getColumn("K").width = 13;
+  ws.getColumn("L").width = 3;
+  ws.getColumn("M").width = 16;
+  ws.getColumn("N").width = 7;
+  ws.getColumn("O").width = 13;
+  ws.getColumn("P").width = 16;
+  ws.getColumn("Q").width = 7;
+  ws.getColumn("R").width = 13;
+  ws.getColumn("S").width = 3;
+  ws.getColumn("T").width = 9;
+  ws.getColumn("U").width = 14;
+  ws.getColumn("V").width = 11;
+  ws.getColumn("W").width = 16;
 
   // --- Сделки по доллару -------------------------------------------------
-  const TRADE_HEAD = 3;
-  const TRADE_START = TRADE_HEAD + 1;
-  cell("A2", "ПОКУПКА ДОЛЛАРА", { bold: true });
-  cell("E2", "ПРОДАЖА ДОЛЛАРА", { bold: true });
-  styleHeaderRow(
-    ws.getRow(TRADE_HEAD),
-  );
-  cell(`A${TRADE_HEAD}`, "Сумма $", { bold: true });
-  cell(`B${TRADE_HEAD}`, "Курс", { bold: true });
-  cell(`C${TRADE_HEAD}`, "Тенге", { bold: true });
-  cell(`E${TRADE_HEAD}`, "Сумма $", { bold: true });
-  cell(`F${TRADE_HEAD}`, "Курс", { bold: true });
-  cell(`G${TRADE_HEAD}`, "Тенге", { bold: true });
+  // Как в оригинале, блок занимает фиксированные 58 строк: итог всегда падает
+  // на строку 59, а «Остаток» и шапка счетов — на свои привычные места. Если
+  // сделок больше — блок растягивается.
+  const TRADE_START = 1;
+  const TRADE_ROWS = Math.max(58, cs.usdBuys.length, cs.usdSells.length);
+  const TRADE_END = TRADE_START + TRADE_ROWS - 1;
 
-  const tradeCount = Math.max(cs.usdBuys.length, cs.usdSells.length, 1);
-  for (let i = 0; i < tradeCount; i++) {
-    const rowNo = TRADE_START + i;
+  for (let i = 0; i < TRADE_ROWS; i++) {
+    const r = TRADE_START + i;
     const buy = cs.usdBuys[i];
     const sell = cs.usdSells[i];
-    if (buy) {
-      cell(`A${rowNo}`, buy.amount, { numFmt: MONEY });
-      cell(`B${rowNo}`, buy.rate, { numFmt: RATE });
-      cell(`C${rowNo}`, { formula: `A${rowNo}*B${rowNo}` }, { numFmt: MONEY });
-    }
-    if (sell) {
-      cell(`E${rowNo}`, sell.amount, { numFmt: MONEY });
-      cell(`F${rowNo}`, sell.rate, { numFmt: RATE });
-      cell(`G${rowNo}`, { formula: `E${rowNo}*F${rowNo}` }, { numFmt: MONEY });
-    }
+    put(`B${r}`, buy ? buy.amount : null, { fill: C_WHITE, border: THIN, numFmt: NF_KZT });
+    put(`C${r}`, buy ? buy.rate : null, { fill: C_RATE, border: THIN, numFmt: NF_RATE });
+    put(`D${r}`, { formula: `B${r}*C${r}` }, {
+      fill: C_WHITE,
+      border: THIN,
+      numFmt: NF_KZT,
+      bold: true,
+    });
+    put(`H${r}`, sell ? sell.amount : null, { fill: C_WHITE, border: THIN, numFmt: NF_KZT });
+    put(`I${r}`, sell ? sell.rate : null, { fill: C_RATE, border: THIN, numFmt: NF_RATE });
+    put(`J${r}`, { formula: `H${r}*I${r}` }, {
+      fill: C_WHITE,
+      border: THIN,
+      numFmt: NF_KZT,
+      bold: true,
+    });
   }
 
-  // Итоговая строка: объём, средний курс (тенге / объём) и сумма тенге —
-  // ровно те же формулы, что в ручной таблице.
-  const TRADE_END = TRADE_START + tradeCount - 1;
-  const totalRow = TRADE_END + 1;
-  cell(`A${totalRow}`, { formula: `SUM(A${TRADE_START}:A${TRADE_END})` }, {
+  const TOT = TRADE_END + 1;
+  const totalOpts: CellOpts = {
+    fill: C_TOTAL,
+    border: THIN,
     bold: true,
-    numFmt: MONEY,
-    fill: ACCENT_FILL,
-  });
-  cell(
-    `B${totalRow}`,
-    { formula: `IF(A${totalRow}=0,0,C${totalRow}/A${totalRow})` },
-    { bold: true, numFmt: RATE, fill: ACCENT_FILL },
-  );
-  cell(`C${totalRow}`, { formula: `SUM(C${TRADE_START}:C${TRADE_END})` }, {
-    bold: true,
-    numFmt: MONEY,
-    fill: ACCENT_FILL,
-  });
-  cell(`E${totalRow}`, { formula: `SUM(E${TRADE_START}:E${TRADE_END})` }, {
-    bold: true,
-    numFmt: MONEY,
-    fill: ACCENT_FILL,
-  });
-  cell(
-    `F${totalRow}`,
-    { formula: `IF(E${totalRow}=0,0,G${totalRow}/E${totalRow})` },
-    { bold: true, numFmt: RATE, fill: ACCENT_FILL },
-  );
-  cell(`G${totalRow}`, { formula: `SUM(G${TRADE_START}:G${TRADE_END})` }, {
-    bold: true,
-    numFmt: MONEY,
-    fill: ACCENT_FILL,
-  });
-
-  // --- Остаток -----------------------------------------------------------
-  const ostRow = totalRow + 2;
-  cell(`A${ostRow}`, "Остаток", { bold: true });
-  // Куплено − продано. Знак несёт смысл: плюс — перекупили (тенге вложены в
-  // валюту), минус — перепродали (валюта ушла из резерва вкладчиков).
-  cell(`B${ostRow}`, { formula: `A${totalRow}-E${totalRow}` }, {
-    bold: true,
-    numFmt: MONEY,
-    color: cs.ostatokUsd < 0 ? RED : undefined,
-  });
-  // Курс остатка тоже формулой, а не числом: если поправить строку сделки
-  // руками, остаток и его курс пересчитаются сами — как в ручной таблице.
-  cell(
-    `C${ostRow}`,
-    { formula: `IF(B${ostRow}>=0,B${totalRow},F${totalRow})` },
-    { bold: true, numFmt: RATE },
-  );
-  cell(`E${ostRow}`, cs.ostatokUsd >= 0 ? "перекупили (закуп)" : "перепродали (из резерва)", {
-    color: cs.ostatokUsd < 0 ? RED : undefined,
-  });
-  cell(`F${ostRow}`, { formula: `B${ostRow}*C${ostRow}` }, { bold: true, numFmt: MONEY });
-  cell(`G${ostRow}`, "тенге по остатку");
-
-  // --- Блок счетов -------------------------------------------------------
-  const ACC_HEAD = ostRow + 3;
-  const ACC_START = ACC_HEAD + 1;
-  cell(`I${ACC_HEAD}`, "тенге — плюс", { bold: true });
-  cell(`J${ACC_HEAD}`, "сумма", { bold: true });
-  cell(`K${ACC_HEAD}`, "тенге — карыз", { bold: true });
-  cell(`L${ACC_HEAD}`, "сумма", { bold: true });
-  cell(`N${ACC_HEAD}`, "САЛЫНГАН ($)", { bold: true });
-  cell(`O${ACC_HEAD}`, "сумма", { bold: true });
-  cell(`P${ACC_HEAD}`, "КАРЫЗ ($)", { bold: true });
-  cell(`Q${ACC_HEAD}`, "сумма", { bold: true });
-  cell(`S${ACC_HEAD}`, "иные валюты — есть", { bold: true });
-  cell(`T${ACC_HEAD}`, "вал.", { bold: true });
-  cell(`U${ACC_HEAD}`, "сумма", { bold: true });
-  cell(`V${ACC_HEAD}`, "иные валюты — карыз", { bold: true });
-  cell(`W${ACC_HEAD}`, "вал.", { bold: true });
-  cell(`X${ACC_HEAD}`, "сумма", { bold: true });
-  styleHeaderRow(ws.getRow(ACC_HEAD));
-
-  const writeAccounts = (
-    list: CashSheetAccount[],
-    nameCol: string,
-    amountCol: string,
-    currencyCol?: string,
-  ) => {
-    list.forEach((acc, i) => {
-      const rowNo = ACC_START + i;
-      cell(`${nameCol}${rowNo}`, acc.name);
-      if (currencyCol) cell(`${currencyCol}${rowNo}`, acc.currency);
-      cell(`${amountCol}${rowNo}`, acc.amount, {
-        numFmt: acc.currency === "GOLD" ? "#,##0.000" : MONEY,
-      });
-    });
+    size: 11,
+    numFmt: NF_KZT,
   };
-  writeAccounts(cs.kztPlus, "I", "J");
-  writeAccounts(cs.kztKaryz, "K", "L");
-  writeAccounts(cs.usdSalyngan, "N", "O");
-  writeAccounts(cs.usdKaryz, "P", "Q");
-  // Иные валюты идут вперемешку в одной колонке, поэтому у них есть отдельная
-  // колонка кода валюты — по ней же считаются подытоги (складывать EUR с
-  // золотом в одно число бессмысленно).
-  writeAccounts(cs.otherPlus, "S", "U", "T");
-  writeAccounts(cs.otherKaryz, "V", "X", "W");
+  put(`B${TOT}`, { formula: `SUM(B${TRADE_START}:B${TRADE_END})` }, totalOpts);
+  put(`C${TOT}`, { formula: `IF(B${TOT}=0,0,D${TOT}/B${TOT})` }, {
+    ...totalOpts,
+    numFmt: NF_RATE,
+  });
+  put(`D${TOT}`, { formula: `SUM(D${TRADE_START}:D${TRADE_END})` }, {
+    ...totalOpts,
+    align: "center",
+  });
+  put(`E${TOT}`, null, totalOpts);
+  ws.mergeCells(`D${TOT}:E${TOT}`);
+  put(`H${TOT}`, { formula: `SUM(H${TRADE_START}:H${TRADE_END})` }, totalOpts);
+  put(`I${TOT}`, { formula: `IF(H${TOT}=0,0,J${TOT}/H${TOT})` }, {
+    ...totalOpts,
+    numFmt: NF_RATE,
+  });
+  put(`J${TOT}`, { formula: `SUM(J${TRADE_START}:J${TRADE_END})` }, {
+    ...totalOpts,
+    align: "center",
+  });
+  put(`K${TOT}`, null, totalOpts);
+  ws.mergeCells(`J${TOT}:K${TOT}`);
 
-  const accLen = Math.max(
+  // --- «Остаток» ---------------------------------------------------------
+  // F = куплено − продано (без знака при перекупе, с минусом при перепродаже
+  // из резерва), G = сколько тенге за этим стоит. В оригинале G61 — спред
+  // курсов, а G62 = спред × объём продажи; здесь тот же смысл сохранён.
+  const OST_LABEL = TOT + 2;
+  const OST = TOT + 3;
+  put(`F${OST_LABEL}`, "Остаток", { bold: true, size: 12, align: "center" });
+  put(`G${OST_LABEL}`, { formula: `I${TOT}-C${TOT}` }, {
+    bold: true,
+    size: 11,
+    numFmt: "#,##0.000",
+  });
+  put(`F${OST}`, { formula: `B${TOT}-H${TOT}` }, {
+    fill: C_OST,
+    border: THIN,
+    bold: true,
+    size: 15,
+    numFmt: NF_KZT,
+    align: "center",
+  });
+  put(`G${OST}`, { formula: `G${OST_LABEL}*H${TOT}` }, {
+    fill: C_OST2,
+    border: THIN,
+    bold: true,
+    size: 13,
+    numFmt: NF_KZT,
+    align: "center",
+  });
+  ws.mergeCells(`F${OST}:F${OST + 1}`);
+  ws.mergeCells(`G${OST}:G${OST + 1}`);
+  // Подпись направления — чтобы не гадать, перекупили мы или перепродали.
+  put(`H${OST}`, cs.ostatokUsd >= 0 ? "перекупили" : "перепродали (из резерва)", {
+    align: "left",
+    bold: true,
+  });
+
+  // --- Счета -------------------------------------------------------------
+  const HEAD = TOT + 7;
+  const ACC = HEAD + 2;
+  put(`A${HEAD}`, "тенге", { align: "left" });
+  put(`B${HEAD}`, "плюс", { bold: true, size: 12, align: "left" });
+  put(`D${HEAD}`, "тенге", { align: "left" });
+  put(`E${HEAD}`, "минус", { bold: true, size: 12, align: "left" });
+  put(`G${HEAD}`, "САЛЫНГАН", { align: "left" });
+  put(`J${HEAD}`, "КАРЫЗ", { align: "left" });
+  put(`M${HEAD}`, "ИНЫЕ ВАЛЮТЫ", { align: "left" });
+  put(`P${HEAD}`, "ИНЫЕ — КАРЫЗ", { align: "left" });
+
+  const accRows = Math.max(
     cs.kztPlus.length,
     cs.kztKaryz.length,
     cs.usdSalyngan.length,
@@ -1067,94 +1068,149 @@ function buildCashSheet(wb: ExcelJS.Workbook, data: DailyReportData) {
     cs.otherKaryz.length,
     1,
   );
-  const ACC_END = ACC_START + accLen - 1;
-  const accTotalRow = ACC_END + 1;
-  for (const col of ["J", "L", "O", "Q"]) {
-    cell(
-      `${col}${accTotalRow}`,
-      { formula: `SUM(${col}${ACC_START}:${col}${ACC_END})` },
-      { bold: true, numFmt: MONEY, fill: ACCENT_FILL },
-    );
-  }
-  cell(`I${accTotalRow}`, "ИТОГО", { bold: true });
-  cell(`K${accTotalRow}`, "ИТОГО", { bold: true });
-  cell(`N${accTotalRow}`, "ИТОГО", { bold: true });
-  cell(`P${accTotalRow}`, "ИТОГО", { bold: true });
+  const ACC_END = ACC + accRows - 1;
 
-  // Иные валюты: подытог отдельной строкой на КАЖДУЮ валюту (SUMIF по коду),
-  // а не одной суммой — иначе в итоге сложились бы евро с граммами золота.
+  const writeBlock = (
+    list: CashSheetAccount[],
+    nameCol: string,
+    amountCol: string,
+    o: { nameFill?: string; amountFill?: string; numFmt: string; currencyCol?: string },
+  ) => {
+    for (let i = 0; i < accRows; i++) {
+      const r = ACC + i;
+      const acc = list[i];
+      put(`${nameCol}${r}`, acc ? acc.name : null, {
+        fill: o.nameFill,
+        border: THIN,
+        align: "left",
+      });
+      if (o.currencyCol) {
+        put(`${o.currencyCol}${r}`, acc ? acc.currency : null, {
+          fill: o.nameFill,
+          border: THIN,
+          align: "center",
+        });
+      }
+      put(`${amountCol}${r}`, acc ? acc.amount : null, {
+        fill: o.amountFill,
+        border: THIN,
+        numFmt: acc && acc.currency === "GOLD" ? NF_GOLD : o.numFmt,
+      });
+    }
+  };
+
+  writeBlock(cs.kztPlus, "A", "B", { nameFill: C_WHITE, amountFill: C_WHITE, numFmt: NF_KZT });
+  writeBlock(cs.kztKaryz, "D", "E", { nameFill: C_WHITE, amountFill: C_WHITE, numFmt: NF_KZT });
+  writeBlock(cs.usdSalyngan, "G", "H", { nameFill: C_SALYNGAN, numFmt: NF_USD });
+  writeBlock(cs.usdKaryz, "J", "K", {
+    nameFill: C_KARYZ,
+    amountFill: C_WHITE,
+    numFmt: NF_USD,
+  });
+  // Иные валюты — та же цветовая логика (зелёный «лежит у нас», розовый
+  // «должны нам»), плюс колонка кода валюты: в одном столбце они вперемешку.
+  writeBlock(cs.otherPlus, "M", "O", {
+    nameFill: C_SALYNGAN,
+    numFmt: NF_KZT,
+    currencyCol: "N",
+  });
+  writeBlock(cs.otherKaryz, "P", "R", {
+    nameFill: C_KARYZ,
+    amountFill: C_WHITE,
+    numFmt: NF_KZT,
+    currencyCol: "Q",
+  });
+
+  // Итоги по колонкам счетов
+  const SUMROW = ACC_END + 1;
+  const sumOpts: CellOpts = { fill: C_SUM, border: THIN, numFmt: NF_KZT };
+  put(`B${SUMROW}`, { formula: `SUM(B${ACC}:B${ACC_END})` }, sumOpts);
+  put(`E${SUMROW}`, { formula: `SUM(E${ACC}:E${ACC_END})` }, sumOpts);
+  put(`H${SUMROW}`, { formula: `SUM(H${ACC}:H${ACC_END})` }, { ...sumOpts, numFmt: NF_USD });
+  put(`K${SUMROW}`, { formula: `SUM(K${ACC}:K${ACC_END})` }, { ...sumOpts, numFmt: NF_USD });
+
+  // Разницы «лежит у нас» − «должны нам», как D109 и I110 в оригинале.
+  const DIFF = SUMROW + 1;
+  put(`E${DIFF}`, { formula: `B${SUMROW}-E${SUMROW}` }, {
+    fill: C_WHITE,
+    border: THIN,
+    bold: true,
+    size: 12,
+    numFmt: NF_KZT,
+  });
+  put(`K${DIFF}`, { formula: `H${SUMROW}-K${SUMROW}` }, {
+    border: MEDIUM,
+    bold: true,
+    size: 11,
+    numFmt: NF_USD,
+  });
+
+  // Иные валюты: подытог по КАЖДОЙ валюте отдельно (SUMIF по коду) — складывать
+  // евро с граммами золота в одно число бессмысленно.
   const otherCodes = [
     ...new Set([...cs.otherPlus, ...cs.otherKaryz].map((a) => a.currency)),
   ].sort();
   otherCodes.forEach((code, i) => {
-    const rowNo = accTotalRow + i;
-    cell(`S${rowNo}`, `ИТОГО ${code}`, { bold: true });
-    cell(
-      `U${rowNo}`,
-      { formula: `SUMIF(T${ACC_START}:T${ACC_END},"${code}",U${ACC_START}:U${ACC_END})` },
-      { bold: true, numFmt: code === "GOLD" ? "#,##0.000" : MONEY, fill: ACCENT_FILL },
-    );
-    cell(`V${rowNo}`, `ИТОГО ${code}`, { bold: true });
-    cell(
-      `X${rowNo}`,
-      { formula: `SUMIF(W${ACC_START}:W${ACC_END},"${code}",X${ACC_START}:X${ACC_END})` },
-      { bold: true, numFmt: code === "GOLD" ? "#,##0.000" : MONEY, fill: ACCENT_FILL },
-    );
+    const r = SUMROW + i;
+    const nf = code === "GOLD" ? NF_GOLD : NF_KZT;
+    put(`M${r}`, `ИТОГО ${code}`, { align: "left", bold: true });
+    put(`O${r}`, { formula: `SUMIF(N${ACC}:N${ACC_END},"${code}",O${ACC}:O${ACC_END})` }, {
+      ...sumOpts,
+      numFmt: nf,
+    });
+    put(`P${r}`, `ИТОГО ${code}`, { align: "left", bold: true });
+    put(`R${r}`, { formula: `SUMIF(Q${ACC}:Q${ACC_END},"${code}",R${ACC}:R${ACC_END})` }, {
+      ...sumOpts,
+      numFmt: nf,
+    });
   });
 
-  // Разница «лежит у нас» − «должны нам» по тенге и доллару.
-  const diffRow = accTotalRow + 1;
-  cell(`I${diffRow}`, "Разница (тенге)", { bold: true });
-  cell(`J${diffRow}`, { formula: `J${accTotalRow}-L${accTotalRow}` }, {
-    bold: true,
-    numFmt: MONEY,
-  });
-  cell(`N${diffRow}`, "Разница ($)", { bold: true });
-  cell(`O${diffRow}`, { formula: `O${accTotalRow}-Q${accTotalRow}` }, {
-    bold: true,
-    numFmt: MONEY,
-  });
+  // --- Остатки валют в кассе и средний курс покупки ----------------------
+  // «Сколько денег вкладчиков во что вложено» — ради этого блок и нужен.
+  put(`T${HEAD}`, "Валюта", { bold: true, fill: C_TOTAL, border: THIN, align: "center" });
+  put(`U${HEAD}`, "Остаток", { bold: true, fill: C_TOTAL, border: THIN });
+  put(`V${HEAD}`, "Ср. курс", { bold: true, fill: C_TOTAL, border: THIN });
+  put(`W${HEAD}`, "Вложено ₸", { bold: true, fill: C_TOTAL, border: THIN });
 
-  // --- Итоги по валютам в кассе -----------------------------------------
-  const CUR_HEAD = ACC_HEAD;
-  cell(`Z${CUR_HEAD}`, "Валюта", { bold: true });
-  cell(`AA${CUR_HEAD}`, "Остаток", { bold: true });
-  cell(`AB${CUR_HEAD}`, "Ср. курс покупки", { bold: true });
-  cell(`AC${CUR_HEAD}`, "Вложено ₸", { bold: true });
-
-  const curStart = CUR_HEAD + 1;
+  const curStart = HEAD + 1;
   cs.currencyTotals.forEach((t, i) => {
-    const rowNo = curStart + i;
-    cell(`Z${rowNo}`, t.currency, { bold: true });
-    cell(`AA${rowNo}`, t.amount, { numFmt: t.currency === "GOLD" ? "#,##0.000" : MONEY });
-    cell(`AB${rowNo}`, t.avgRate, { numFmt: RATE });
-    cell(`AC${rowNo}`, { formula: `AA${rowNo}*AB${rowNo}` }, { numFmt: MONEY });
+    const r = curStart + i;
+    put(`T${r}`, t.currency, { bold: true, border: THIN, align: "center" });
+    put(`U${r}`, t.amount, {
+      border: THIN,
+      numFmt: t.currency === "GOLD" ? NF_GOLD : NF_KZT,
+    });
+    put(`V${r}`, t.avgRate, { border: THIN, numFmt: NF_RATE });
+    put(`W${r}`, { formula: `U${r}*V${r}` }, { border: THIN, numFmt: NF_KZT });
   });
   const curEnd = curStart + Math.max(cs.currencyTotals.length, 1) - 1;
-  const curTotalRow = curEnd + 1;
-  cell(`Z${curTotalRow}`, "ИТОГО ₸", { bold: true });
-  cell(`AC${curTotalRow}`, { formula: `SUM(AC${curStart}:AC${curEnd})` }, {
+  const curTot = curEnd + 1;
+  put(`T${curTot}`, "ИТОГО ₸", { bold: true, align: "left" });
+  put(`W${curTot}`, { formula: `SUM(W${curStart}:W${curEnd})` }, {
+    fill: C_SUM,
+    border: THIN,
     bold: true,
-    numFmt: MONEY,
-    fill: ACCENT_FILL,
+    numFmt: NF_KZT,
   });
 
   // --- Доход и прибыль ---------------------------------------------------
-  const incomeRow = curTotalRow + 2;
-  cell(`Z${incomeRow}`, "Доход за смену ₸", { bold: true });
-  cell(`AC${incomeRow}`, cs.incomeKzt, {
+  const incomeRow = curTot + 2;
+  put(`T${incomeRow}`, "Доход", { bold: true, size: 12, align: "left" });
+  put(`W${incomeRow}`, cs.incomeKzt, {
+    fill: C_OST,
+    border: THIN,
     bold: true,
-    numFmt: MONEY,
-    fill: ACCENT_FILL,
-    color: cs.incomeKzt < 0 ? RED : undefined,
+    size: 13,
+    numFmt: NF_KZT,
   });
   const profitRow = incomeRow + 1;
-  cell(`Z${profitRow}`, "Чистая прибыль ₸", { bold: true });
-  cell(`AC${profitRow}`, cs.netProfitKzt, {
+  put(`T${profitRow}`, "Чистая прибыль", { bold: true, size: 12, align: "left" });
+  put(`W${profitRow}`, cs.netProfitKzt, {
+    fill: C_OST2,
+    border: THIN,
     bold: true,
-    numFmt: MONEY,
-    fill: cs.netProfitKzt < 0 ? WARN_FILL : ACCENT_FILL,
-    color: cs.netProfitKzt < 0 ? RED : undefined,
+    size: 13,
+    numFmt: NF_KZT,
   });
 }
 
