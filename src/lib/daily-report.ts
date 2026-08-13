@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import type { CarryIn } from "@/lib/simple-income";
 import { peopleMoneySpendFromReportTxs } from "@/lib/fx-people-money-spend";
 
 export type Currency = "USD" | "EUR" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
@@ -235,6 +236,10 @@ export function buildDailyReport(
   /** Средневзвешенная себестоимость остатка по валютам (из журнала покупок,
    * тот же движок, что в «Калькуляторе дохода»): код валюты → курс. */
   inventoryAvgRate: Partial<Record<Currency, number>> = {},
+  /** Перенос остатка с прошлой смены: он участвует в расчёте как обычная
+   * операция (излишек закупа — в покупки, перепродажа — в продажи), поэтому
+   * попадает и в итоги листа «Касса», и в избыток. */
+  carryIn: CarryIn[] = [],
 ): DailyReportData {
   const now = new Date();
   const opening: Record<Currency, number> = {
@@ -360,6 +365,14 @@ export function buildDailyReport(
     .filter((t) => t.kind === "sell" && t.currency === "USD" && (t.rate ?? 0) > 0)
     .sort((a, b) => a.ts - b.ts)
     .map((t) => ({ amount: t.amount, rate: t.rate as number }));
+
+  // Перенос с прошлой смены — такая же строка сделки, просто вчерашняя.
+  const usdCarry = carryIn.find((c) => c.currency === "USD");
+  if (usdCarry && usdCarry.amount !== 0 && usdCarry.rate > 0) {
+    const row = { amount: Math.abs(usdCarry.amount), rate: usdCarry.rate };
+    if (usdCarry.amount > 0) usdBuys.unshift(row);
+    else usdSells.unshift(row);
+  }
 
   const usdBoughtAmt = usdBuys.reduce((n, r) => n + r.amount, 0);
   const usdBoughtKzt = usdBuys.reduce((n, r) => n + r.amount * r.rate, 0);
@@ -1047,8 +1060,40 @@ function buildCashSheet(wb: ExcelJS.Workbook, data: DailyReportData) {
     bold: true,
   });
 
+  // Избыток купли/продажи доллара в тенге — расписан как явная арифметика:
+  //     объём избытка (минус, если перепродали) × средний курс = сумма ₸
+  // Курс берём той стороны, которая избыток и сформировала: перекупили —
+  // средний курс покупки, перепродали — средний курс продажи. Минус в сумме
+  // означает, что эти доллары ушли из денег вкладчиков, а не из купленного.
+  const EXC = OST + 2;
+  put(`E${EXC}`, "Избыток $", { bold: true, size: 12, align: "left" });
+  put(`F${EXC}`, { formula: `B${TOT}-H${TOT}` }, {
+    fill: C_OST,
+    border: THIN,
+    bold: true,
+    size: 12,
+    numFmt: NF_KZT,
+  });
+  put(`G${EXC}`, "×", { bold: true, align: "center" });
+  put(`H${EXC}`, { formula: `IF(F${EXC}>=0,C${TOT},I${TOT})` }, {
+    fill: C_RATE,
+    border: THIN,
+    bold: true,
+    size: 12,
+    numFmt: NF_RATE,
+  });
+  put(`I${EXC}`, "=", { bold: true, align: "center" });
+  put(`J${EXC}`, { formula: `F${EXC}*H${EXC}` }, {
+    fill: C_OST2,
+    border: THIN,
+    bold: true,
+    size: 13,
+    numFmt: NF_KZT,
+  });
+  put(`K${EXC}`, cs.ostatokUsd >= 0 ? "закуп" : "из резерва", { align: "left", bold: true });
+
   // --- Счета -------------------------------------------------------------
-  const HEAD = TOT + 7;
+  const HEAD = TOT + 9;
   const ACC = HEAD + 2;
   put(`A${HEAD}`, "тенге", { align: "left" });
   put(`B${HEAD}`, "плюс", { bold: true, size: 12, align: "left" });

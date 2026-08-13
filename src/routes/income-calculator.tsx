@@ -19,6 +19,10 @@ import { useFxPurchases } from "@/lib/fx-purchases";
 import { useExpenses } from "@/lib/expenses";
 import { buildIncomeSummary } from "@/lib/income-calculator";
 import { useCashTransactions } from "@/lib/cash-register";
+import { computeSimpleIncome, totalSimpleIncome } from "@/lib/simple-income";
+import { useSessionCarryIn } from "@/lib/session-carry-in";
+import { useMoneySpendLog } from "@/lib/people-money-spend-log";
+import { txsToFxOps } from "@/lib/fx-people-money-spend";
 
 export const Route = createFileRoute("/income-calculator")({
   head: () => ({
@@ -72,6 +76,8 @@ function IncomeCalculatorPage() {
   const { data: expenses = [], isLoading: expensesLoading } = useExpenses();
   const { data: currencies = [] } = useFxCurrencies();
   const { data: transactions = [] } = useCashTransactions();
+  const { data: carryIn = [] } = useSessionCarryIn();
+  const { data: spendLog = [] } = useMoneySpendLog();
   const isLoading = purchasesLoading || salesLoading || expensesLoading;
 
   const [filters, setFilters] = useState<FxSalesFilters>(() => ({ ...defaultFilters(), period: "day" }));
@@ -90,22 +96,49 @@ function IncomeCalculatorPage() {
   const monthTs = useMemo(() => quickPeriodTs("month"), []);
   const yearTs = useMemo(() => quickPeriodTs("year"), []);
 
-  const dayIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, dayTs.fromTs, dayTs.toTs, expenses),
-    [purchases, sales, currencies, dayTs, expenses],
+  // Доход текущей (ещё не закрытой) смены — по простой формуле обменника:
+  // (ср.курс продажи − ср.курс покупки) × min(куплено, продано), с учётом
+  // остатка, перенесённого с прошлой смены.
+  const liveSimple = useMemo(
+    () => computeSimpleIncome(txsToFxOps(transactions), carryIn),
+    [transactions, carryIn],
   );
-  const weekIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, weekTs.fromTs, weekTs.toTs, expenses),
-    [purchases, sales, currencies, weekTs, expenses],
+  const liveIncomeKzt = useMemo(() => totalSimpleIncome(liveSimple), [liveSimple]);
+
+  /** Доход за период = закрытые смены из журнала + текущая смена, если она
+   * началась внутри периода. Закрытые смены не пересчитываем: их доход
+   * зафиксирован в момент «Новый день» вместе с применённым переносом. */
+  const incomeForPeriod = useMemo(
+    () => (fromTs: number, toTs: number) => {
+      const closed = spendLog
+        .filter((e) => e.sessionStart >= fromTs && e.sessionStart <= toTs)
+        .reduce((sum, e) => sum + e.incomeKzt, 0);
+      const liveInPeriod = sessionFromTs >= fromTs && sessionFromTs <= toTs ? liveIncomeKzt : 0;
+      return closed + liveInPeriod;
+    },
+    [spendLog, sessionFromTs, liveIncomeKzt],
   );
-  const monthIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, monthTs.fromTs, monthTs.toTs, expenses),
-    [purchases, sales, currencies, monthTs, expenses],
-  );
-  const yearIncome = useMemo(
-    () => buildIncomeSummary(purchases, sales, currencies, yearTs.fromTs, yearTs.toTs, expenses),
-    [purchases, sales, currencies, yearTs, expenses],
-  );
+
+  const dayIncome = useMemo(() => {
+    const base = buildIncomeSummary(purchases, sales, currencies, dayTs.fromTs, dayTs.toTs, expenses);
+    const marginKzt = incomeForPeriod(dayTs.fromTs, dayTs.toTs);
+    return { ...base, totalMarginKzt: marginKzt, netProfitKzt: marginKzt - base.totalExpensesKzt };
+  }, [purchases, sales, currencies, dayTs, expenses, incomeForPeriod]);
+  const weekIncome = useMemo(() => {
+    const base = buildIncomeSummary(purchases, sales, currencies, weekTs.fromTs, weekTs.toTs, expenses);
+    const marginKzt = incomeForPeriod(weekTs.fromTs, weekTs.toTs);
+    return { ...base, totalMarginKzt: marginKzt, netProfitKzt: marginKzt - base.totalExpensesKzt };
+  }, [purchases, sales, currencies, weekTs, expenses, incomeForPeriod]);
+  const monthIncome = useMemo(() => {
+    const base = buildIncomeSummary(purchases, sales, currencies, monthTs.fromTs, monthTs.toTs, expenses);
+    const marginKzt = incomeForPeriod(monthTs.fromTs, monthTs.toTs);
+    return { ...base, totalMarginKzt: marginKzt, netProfitKzt: marginKzt - base.totalExpensesKzt };
+  }, [purchases, sales, currencies, monthTs, expenses, incomeForPeriod]);
+  const yearIncome = useMemo(() => {
+    const base = buildIncomeSummary(purchases, sales, currencies, yearTs.fromTs, yearTs.toTs, expenses);
+    const marginKzt = incomeForPeriod(yearTs.fromTs, yearTs.toTs);
+    return { ...base, totalMarginKzt: marginKzt, netProfitKzt: marginKzt - base.totalExpensesKzt };
+  }, [purchases, sales, currencies, yearTs, expenses, incomeForPeriod]);
 
   // День выбран через фильтр периода — используем ту же границу текущей
   // смены, что и в плитке "Сегодня" выше, а не календарный день, иначе
@@ -120,7 +153,15 @@ function IncomeCalculatorPage() {
     [currencies, customCurrencies],
   );
   const customIncome = useMemo(() => {
-    const full = buildIncomeSummary(purchases, sales, currencies, customTs.fromTs, customTs.toTs, expenses);
+    const base = buildIncomeSummary(purchases, sales, currencies, customTs.fromTs, customTs.toTs, expenses);
+    // Доход берём по простой формуле обменника, расходы и разбивку по
+    // валютам — из прежнего расчёта (объёмы и курсы там те же).
+    const marginKzt = incomeForPeriod(customTs.fromTs, customTs.toTs);
+    const full = {
+      ...base,
+      totalMarginKzt: marginKzt,
+      netProfitKzt: marginKzt - base.totalExpensesKzt,
+    };
     // Расходы не привязаны к валюте (всегда в тенге, категория) — фильтр по
     // валюте влияет только на доход от купли/продажи, не на расходы.
     if (customCurrencies.length === 0) return full;
@@ -132,7 +173,7 @@ function IncomeCalculatorPage() {
       totalMarginKzt,
       netProfitKzt: totalMarginKzt - full.totalExpensesKzt,
     };
-  }, [purchases, sales, currencies, customTs, customCurrencies, expenses]);
+  }, [purchases, sales, currencies, customTs, customCurrencies, expenses, incomeForPeriod]);
 
   function setPeriod(period: FxSalesFilters["period"]) {
     if (period === "custom" || period === "all") {
@@ -177,14 +218,14 @@ function IncomeCalculatorPage() {
         <div className="flex items-start gap-2 rounded-md border border-accent bg-accent/40 p-3 text-xs text-accent-foreground">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            Доход считается по методу средневзвешенной себестоимости: каждая продажа сравнивается
-            со средним курсом покупки всей истории до неё, а не только за выбранный период — так
-            доход не «теряется», если купили в одном периоде, а продали в другом. Журнал покупок
-            ведётся с 10.08.2026 — если для продажи нет данных о покупке (валюта продана раньше,
-            чем куплена по журналу), доход по такой продаже считается нулевым, а не полной суммой
-            продажи, пока не накопится история покупок. Чистая прибыль = доход от купли/продажи
-            валют минус невозвратные расходы (Тамак/Айлык/Ага/Апше/Прочее из карточки «Расходы»,
-            всегда в тенге).
+            Доход считается так же, как в кассе вручную:{" "}
+            <b>(ср. курс продажи − ср. курс покупки) × меньший из объёмов</b> за смену. Разница
+            объёмов дохода пока не даёт — она переносится в следующую смену обычной операцией:
+            купили больше — излишек по среднему курсу покупки встаёт в её покупки, продали больше
+            — по среднему курсу продажи встаёт в её продажи. Поэтому доход не теряется на стыке
+            смен: проданная сегодня чужая валюта найдёт свою пару в тот день, когда мы выкупим её
+            обратно. Периоды длиннее смены складываются из доходов закрытых смен. Чистая прибыль =
+            доход минус невозвратные расходы (Тамак/Зарплаты/Ага/Апше/Прочее), всегда в тенге.
           </p>
         </div>
 

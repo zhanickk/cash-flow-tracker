@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import type { SimpleCurrencyIncome } from "@/lib/simple-income";
 import {
   computeSessionExcessByCurrency,
   type CashFxOp,
@@ -25,6 +26,11 @@ export interface MoneySpendLogEntry {
   excessAmount: number;
   avgRate: number;
   spendKzt: number;
+  /** Доход смены по простой формуле, зафиксированный при «Новый день». */
+  incomeKzt: number;
+  matchedAmount: number;
+  carryInAmount: number;
+  carryInRate: number;
 }
 
 const LOG_KEY = ["people-money-spend-log"];
@@ -43,6 +49,10 @@ export function rowToEntry(r: LogRow): MoneySpendLogEntry {
     excessAmount: Number(r.excess_amount),
     avgRate: Number(r.avg_rate),
     spendKzt: Number(r.spend_kzt),
+    incomeKzt: Number(r.income_kzt ?? 0),
+    matchedAmount: Number(r.matched_amount ?? 0),
+    carryInAmount: Number(r.carry_in_amount ?? 0),
+    carryInRate: Number(r.carry_in_rate ?? 0),
   };
 }
 
@@ -75,23 +85,35 @@ export async function recordMoneySpendLog(
   sessionEnd: number,
   rows: PeopleMoneySpendDay[],
   cashierName?: string | null,
+  /** Итог смены по простой формуле: доход, закрытый объём и применённый
+   * перенос. Пишется в тот же журнал, чтобы недельные и месячные итоги
+   * складывались из закрытых смен, а не пересчитывались заново. */
+  simpleRows: SimpleCurrencyIncome[] = [],
 ) {
+  const simpleByCurrency = new Map(simpleRows.map((r) => [r.currency, r]));
   const payload = rows
     .filter((r) => r.boughtAmt > 0 || r.soldAmt > 0)
-    .map((r) => ({
-      session_start: new Date(sessionStart).toISOString(),
-      session_end: new Date(sessionEnd).toISOString(),
-      currency_code: r.currency,
-      bought_amount: r.boughtAmt,
-      sold_amount: r.soldAmt,
-      avg_buy_rate: r.avgBuyRate,
-      avg_sell_rate: r.avgSellRate,
-      direction: r.direction,
-      excess_amount: r.excessAmt,
-      avg_rate: r.avgRate,
-      spend_kzt: r.spendKzt,
-      cashier_name: cashierName ?? null,
-    }));
+    .map((r) => {
+      const simple = simpleByCurrency.get(r.currency);
+      return {
+        session_start: new Date(sessionStart).toISOString(),
+        session_end: new Date(sessionEnd).toISOString(),
+        currency_code: r.currency,
+        bought_amount: simple?.boughtAmt ?? r.boughtAmt,
+        sold_amount: simple?.soldAmt ?? r.soldAmt,
+        avg_buy_rate: simple?.avgBuyRate ?? r.avgBuyRate,
+        avg_sell_rate: simple?.avgSellRate ?? r.avgSellRate,
+        direction: simple?.direction ?? r.direction,
+        excess_amount: simple?.excessAmt ?? r.excessAmt,
+        avg_rate: simple?.excessRate ?? r.avgRate,
+        spend_kzt: simple ? Math.abs(simple.excessKzt) : r.spendKzt,
+        carry_in_amount: simple?.carryInAmount ?? 0,
+        carry_in_rate: simple?.carryInRate ?? 0,
+        matched_amount: simple?.matchedAmt ?? 0,
+        income_kzt: simple?.incomeKzt ?? 0,
+        cashier_name: cashierName ?? null,
+      };
+    });
   if (payload.length === 0) return;
   const { error } = await supabase.from("people_money_spend_log").insert(payload);
   if (error) throw error;

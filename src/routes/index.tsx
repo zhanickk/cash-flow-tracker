@@ -87,6 +87,8 @@ import {
 import { useFxPurchases } from "@/lib/fx-purchases";
 import { useFxCurrencies, useFxSales } from "@/lib/fx-sales";
 import { computeSessionExcessByCurrency, txsToFxOps } from "@/lib/fx-people-money-spend";
+import { carryOutFrom, computeSimpleIncome, totalSimpleIncome } from "@/lib/simple-income";
+import { useSessionCarryIn } from "@/lib/session-carry-in";
 import { buildIncomeSummary, computeInventoryCostBasis } from "@/lib/income-calculator";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
@@ -309,6 +311,9 @@ function Index() {
   const logout = useLogout();
 
   const { data: contactsWithBalances = [] } = useContactsWithBalances();
+  // Перенос остатка с прошлой смены — участвует в расчёте дохода как обычная
+  // операция (излишек закупа в покупки, перепродажа в продажи).
+  const { data: carryIn = [] } = useSessionCarryIn();
   const addContactTx = useAddContactTransaction();
   const deleteContactTx = useDeleteContactTransaction();
   const updateContactTx = useUpdateContactTransaction();
@@ -454,6 +459,10 @@ function Index() {
       // просто не попадают в окно и margin считается по пустому диапазону —
       // 0 при живой кассе.
       const toTs = Date.now();
+      // Доход смены по простой формуле обменника — она же идёт в отчёт и в
+      // лист «Касса».
+      const simpleRows = computeSimpleIncome(txsToFxOps(transactions), carryIn);
+      const simpleIncomeKzt = totalSimpleIncome(simpleRows);
       const weightedAvg = weightedAvgDataLoading
         ? undefined
         : (() => {
@@ -469,10 +478,14 @@ function Index() {
             for (const row of sessionIncome.byCurrency) {
               marginByCurrency[row.currencyCode] = row.marginKzt;
             }
+            const marginByCurrencySimple: Record<string, number> = {};
+            for (const row of Object.values(simpleRows)) {
+              marginByCurrencySimple[row.currency] = row.incomeKzt;
+            }
             return {
-              fxMarginKzt: sessionIncome.totalMarginKzt,
+              fxMarginKzt: simpleIncomeKzt,
               expensesKzt: sessionIncome.totalExpensesKzt,
-              marginByCurrency,
+              marginByCurrency: { ...marginByCurrency, ...marginByCurrencySimple },
             };
           })();
       // Дата отчёта = дата начала текущей сессии, а не календарная "сегодня"
@@ -507,6 +520,7 @@ function Index() {
         contactAccounts,
         contactBalances,
         inventoryAvgRate,
+        carryIn,
       );
       const buffer = await buildReportWorkbook(data);
       setReportData(data);
@@ -578,7 +592,18 @@ function Index() {
     // иначе история "Трата Жұрттың ақшасы" терялась бы вместе со сбросом
     // cash_transactions.
     const spendLog = Object.values(sessionExcess);
-    newDayCashRegister.mutate({ openings, excessBuys, spendLog, sessionStart: sessionFromTs });
+    // Простой расчёт закрывающейся смены: доход по формуле
+    // (ср.курс продажи − ср.курс покупки) × min(куплено, продано), а
+    // неперекрытый остаток уезжает в следующую смену обычной операцией.
+    const simple = computeSimpleIncome(txsToFxOps(transactions), carryIn);
+    newDayCashRegister.mutate({
+      openings,
+      excessBuys,
+      spendLog,
+      sessionStart: sessionFromTs,
+      simpleRows: Object.values(simple),
+      carryOut: carryOutFrom(simple),
+    });
     localStorage.removeItem(REPORT_DONE_KEY);
     setReportDoneToday(false);
     setNewDayOpen(false);

@@ -619,12 +619,16 @@ export type Database = {
           avg_rate: number
           avg_sell_rate: number
           bought_amount: number
+          carry_in_amount: number
+          carry_in_rate: number
           cashier_name: string | null
           created_at: string
           currency_code: string
           direction: string
           excess_amount: number
           id: string
+          income_kzt: number
+          matched_amount: number
           session_end: string
           session_start: string
           sold_amount: number
@@ -635,12 +639,16 @@ export type Database = {
           avg_rate?: number
           avg_sell_rate?: number
           bought_amount?: number
+          carry_in_amount?: number
+          carry_in_rate?: number
           cashier_name?: string | null
           created_at?: string
           currency_code: string
           direction?: string
           excess_amount?: number
           id?: string
+          income_kzt?: number
+          matched_amount?: number
           session_end: string
           session_start: string
           sold_amount?: number
@@ -651,16 +659,41 @@ export type Database = {
           avg_rate?: number
           avg_sell_rate?: number
           bought_amount?: number
+          carry_in_amount?: number
+          carry_in_rate?: number
           cashier_name?: string | null
           created_at?: string
           currency_code?: string
           direction?: string
           excess_amount?: number
           id?: string
+          income_kzt?: number
+          matched_amount?: number
           session_end?: string
           session_start?: string
           sold_amount?: number
           spend_kzt?: number
+        }
+        Relationships: []
+      }
+      session_carry_in: {
+        Row: {
+          amount: number
+          currency_code: string
+          rate: number
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          currency_code: string
+          rate?: number
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          currency_code?: string
+          rate?: number
+          updated_at?: string
         }
         Relationships: []
       }
