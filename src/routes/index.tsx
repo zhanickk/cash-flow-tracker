@@ -778,14 +778,6 @@ function Index() {
           onUpdate={updateTx}
           onDelete={deleteTx}
         />
-        {/* Создание контакта — только явным действием. Поиск по имени внутри
-            модулей контакт больше не заводит, чтобы опечатки не плодили дубли. */}
-        <div className="lg:col-span-2">
-          <Button variant="outline" className="w-full gap-2" onClick={() => openNewContactDialog()}>
-            <UserPlus className="h-4 w-4" />
-            Новый контакт
-          </Button>
-        </div>
         <IncomeCard
           txs={transactions.filter((t) => t.kind === "income")}
           onAdd={addContactLinkedTx}
@@ -793,6 +785,7 @@ function Index() {
           onDelete={deleteTx}
           contacts={contactsWithBalances}
           contactMap={contactMap}
+          onNewContact={() => openNewContactDialog()}
         />
         <ExpensePersonCard
           txs={transactions.filter((t) => t.kind === "expense" && t.expenseType === "person")}
@@ -801,6 +794,7 @@ function Index() {
           onDelete={deleteTx}
           contacts={contactsWithBalances}
           contactMap={contactMap}
+          onNewContact={() => openNewContactDialog()}
         />
         <div className="lg:col-span-2">
           <ExpenseCategoryCard
@@ -1611,12 +1605,15 @@ function SectionCard({
   icon: Icon,
   tone,
   badge,
+  headerAction,
   children,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   tone: "success" | "danger" | "primary";
   badge?: string;
+  /** Кнопка справа в шапке карточки (например, «Новый контакт»). */
+  headerAction?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -1641,11 +1638,14 @@ function SectionCard({
             />
             {title}
           </span>
-          {badge && (
-            <span className="rounded-full bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              {badge}
-            </span>
-          )}
+          <span className="flex items-center gap-2">
+            {headerAction}
+            {badge && (
+              <span className="rounded-full bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {badge}
+              </span>
+            )}
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 p-3 sm:p-4">{children}</CardContent>
@@ -2405,9 +2405,19 @@ interface ContactAddProps extends Omit<AddProps, "onAdd"> {
   onAdd: (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => void | Promise<void>;
   contacts: ContactWithBalance[];
   contactMap: Map<string, ContactWithBalance>;
+  /** Открыть диалог создания контакта — ввод имени в поле его больше не создаёт. */
+  onNewContact?: () => void;
 }
 
-function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: ContactAddProps) {
+function IncomeCard({
+  txs,
+  onAdd,
+  onUpdate,
+  onDelete,
+  contacts,
+  contactMap,
+  onNewContact,
+}: ContactAddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [name, setName] = useState("");
@@ -2448,6 +2458,19 @@ function IncomeCard({ txs, onAdd, onUpdate, onDelete, contacts, contactMap }: Co
       icon={HandCoins}
       tone="success"
       badge={`${txs.length}`}
+      headerAction={
+        onNewContact && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 bg-card px-2 text-xs"
+            onClick={onNewContact}
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Контакт
+          </Button>
+        )
+      }
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_1fr_1fr_1fr_auto]">
         <ContactAutocompleteField
@@ -2787,6 +2810,7 @@ function ExpensePersonCard({
   onDelete,
   contacts,
   contactMap,
+  onNewContact,
 }: ContactAddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
@@ -2839,6 +2863,19 @@ function ExpensePersonCard({
       icon={ArrowDownCircle}
       tone="danger"
       badge={`${txs.length}`}
+      headerAction={
+        onNewContact && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 bg-card px-2 text-xs"
+            onClick={onNewContact}
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Контакт
+          </Button>
+        )
+      }
     >
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
         <ContactNameAutocomplete
