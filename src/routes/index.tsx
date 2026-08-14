@@ -49,6 +49,7 @@ import {
   Minus,
   FileSpreadsheet,
   Sunrise,
+  UserPlus,
   Download,
   FolderOpen,
   Users,
@@ -103,9 +104,11 @@ import { LogOut } from "lucide-react";
 import { HoverCard, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ContactBalanceHoverCard } from "@/components/contact-hover-card";
 import {
-  findOrCreateContactByName,
+  ContactNotFoundError,
+  findContactByName,
   useAddContactTransaction,
   useContactsWithBalances,
+  useCreateContact,
   useDeleteContactTransaction,
   useUpdateContactTransaction,
   type ContactWithBalance,
@@ -313,6 +316,12 @@ function Index() {
   // Ограничения «не позже сегодняшнего» намеренно нет: кассу открывают на
   // завтра ещё вечером.
   const [newDayDate, setNewDayDate] = useState("");
+  // Контакт, которого не оказалось в справочнике при вводе операции.
+  const [missingContactName, setMissingContactName] = useState<string | null>(null);
+  const [newContactOpen, setNewContactOpen] = useState(false);
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactError, setNewContactError] = useState("");
+  const createContact = useCreateContact();
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const { session } = useSession();
@@ -372,14 +381,37 @@ function Index() {
     addCashTx.mutate(full);
   }
 
+  /** Ищет контакт по имени и НЕ создаёт его, если не нашёл. Опечатка в имени
+   * больше не заводит новую запись в справочнике — вместо этого касса скажет,
+   * что контакта нет, и предложит создать его явно. */
+  async function requireContactId(name: string): Promise<string> {
+    const id = await findContactByName(name);
+    if (!id) throw new ContactNotFoundError(name);
+    return id;
+  }
+
   async function addContactLinkedTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
     const localId = tx.id ?? crypto.randomUUID();
     const full: Transaction = { ...tx, id: localId, ts: Date.now() };
+
+    // Проверяем контакт ДО записи в кассу: если имени нет в справочнике,
+    // операция не сохраняется вовсе. Иначе деньги были бы проведены, а по
+    // контакту не отразились — молчаливое расхождение, которое потом ищут
+    // руками.
+    if (isCashContactLinkedTx(full)) {
+      const contactName = full.name!.trim();
+      const existingId = await findContactByName(contactName);
+      if (!existingId) {
+        setMissingContactName(contactName);
+        return;
+      }
+    }
+
     await addCashTx.mutateAsync(full);
     if (!isCashContactLinkedTx(full)) return;
 
     try {
-      const contactId = await findOrCreateContactByName(full.name!.trim());
+      const contactId = await requireContactId(full.name!.trim());
       const note = cashContactNote(full)!;
       const { amount, currency } = contactSyncPayload(full, {});
       const row = await addContactTx.mutateAsync({ contactId, currency, amount, note });
@@ -399,7 +431,7 @@ function Index() {
     const contactName = (patch.name ?? old.name)?.trim();
     if (!contactName) return;
 
-    const contactId = await findOrCreateContactByName(contactName);
+    const contactId = await requireContactId(contactName);
     let contactTxId = await resolveContactTxId(old, contactId);
     const { amount, currency } = contactSyncPayload(old, patch);
 
@@ -443,7 +475,7 @@ function Index() {
     if (!contactName) return;
 
     try {
-      const contactId = await findOrCreateContactByName(contactName);
+      const contactId = await requireContactId(contactName);
       const contactTxId = await resolveContactTxId(old, contactId);
       if (contactTxId) {
         await deleteContactTx.mutateAsync(contactTxId);
@@ -566,6 +598,30 @@ function Index() {
     } finally {
       setSummaryBusy(false);
     }
+  }
+
+  async function submitNewContact() {
+    const name = newContactName.trim();
+    if (!name) {
+      setNewContactError("Введите имя");
+      return;
+    }
+    const existing = await findContactByName(name);
+    if (existing) {
+      setNewContactError(`Контакт «${name}» уже есть в справочнике`);
+      return;
+    }
+    await createContact.mutateAsync(name);
+    setNewContactOpen(false);
+    setNewContactName("");
+    setNewContactError("");
+  }
+
+  function openNewContactDialog(prefill = "") {
+    setNewContactName(prefill);
+    setNewContactError("");
+    setMissingContactName(null);
+    setNewContactOpen(true);
   }
 
   function openNewDayDialog() {
@@ -722,6 +778,14 @@ function Index() {
           onUpdate={updateTx}
           onDelete={deleteTx}
         />
+        {/* Создание контакта — только явным действием. Поиск по имени внутри
+            модулей контакт больше не заводит, чтобы опечатки не плодили дубли. */}
+        <div className="lg:col-span-2">
+          <Button variant="outline" className="w-full gap-2" onClick={() => openNewContactDialog()}>
+            <UserPlus className="h-4 w-4" />
+            Новый контакт
+          </Button>
+        </div>
         <IncomeCard
           txs={transactions.filter((t) => t.kind === "income")}
           onAdd={addContactLinkedTx}
@@ -982,6 +1046,70 @@ function Index() {
               ))}
             </ul>
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* Контакта нет в справочнике — операция НЕ сохранена */}
+      <Dialog open={missingContactName !== null} onOpenChange={(o) => !o && setMissingContactName(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Контакт не найден</DialogTitle>
+            <DialogDescription>
+              Контакта «{missingContactName}» нет в справочнике, поэтому операция не сохранена.
+              Проверьте имя — возможно, опечатка. Если это действительно новый человек, создайте
+              его явно.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setMissingContactName(null)}>
+              Исправить имя
+            </Button>
+            <Button onClick={() => openNewContactDialog(missingContactName ?? "")}>
+              Создать «{missingContactName}»
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Явное создание контакта */}
+      <Dialog open={newContactOpen} onOpenChange={setNewContactOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Новый контакт</DialogTitle>
+            <DialogDescription>
+              Имя должно совпадать с тем, как вы будете вводить его в кассе. Проверьте, нет ли
+              этого человека в справочнике под другим написанием.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            placeholder="Имя контакта"
+            value={newContactName}
+            onChange={(e) => {
+              setNewContactName(e.target.value);
+              setNewContactError("");
+            }}
+            onKeyDown={(e) => handleEnterKey(e, undefined, submitNewContact)}
+            autoFocus
+          />
+          {newContactName.trim().length > 0 && (
+            <div className="text-xs text-muted-foreground">
+              {(() => {
+                const q = newContactName.trim().toLowerCase();
+                const similar = contactsWithBalances
+                  .filter((c) => c.name.toLowerCase().includes(q) || q.includes(c.name.toLowerCase()))
+                  .slice(0, 5);
+                return similar.length > 0
+                  ? `Похожие уже есть: ${similar.map((c) => c.name).join(", ")}`
+                  : "Похожих контактов не найдено";
+              })()}
+            </div>
+          )}
+          {newContactError && <div className="text-sm text-danger">{newContactError}</div>}
+          <DialogFooter>
+            <Button onClick={submitNewContact} disabled={createContact.isPending}>
+              {createContact.isPending ? "Создаём…" : "Создать"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

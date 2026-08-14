@@ -781,6 +781,34 @@ export function useDeleteContactConversion() {
   });
 }
 
+/** Поиск контакта по имени БЕЗ создания нового.
+ *
+ * Раньше касса создавала контакт автоматически, если введённого имени нет в
+ * базе. Из-за этого любая опечатка («запчачть», «серихан», «Жаркент Ильяс»)
+ * молча превращалась в новый контакт, и справочник зарастал дублями. Теперь
+ * создание — только явное действие через кнопку «Новый контакт». */
+export async function findContactByName(name: string): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id")
+    .ilike("name", trimmed)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.id ?? null;
+}
+
+/** Ошибка «контакта нет» — касса показывает её пользователю вместо того,
+ * чтобы тихо завести новую запись в справочнике. */
+export class ContactNotFoundError extends Error {
+  constructor(public contactName: string) {
+    super(`Контакт «${contactName}» не найден`);
+    this.name = "ContactNotFoundError";
+  }
+}
+
 export async function findOrCreateContactByName(name: string): Promise<string> {
   const trimmed = name.trim();
   const { data: existing, error: findErr } = await supabase
