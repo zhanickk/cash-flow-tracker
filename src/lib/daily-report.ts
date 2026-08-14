@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import type { CarryIn } from "@/lib/simple-income";
-import { peopleMoneySpendFromReportTxs } from "@/lib/fx-people-money-spend";
+import { peopleMoneySpendFromReportTxs, txsToFxOps } from "@/lib/fx-people-money-spend";
+import { computeSimpleIncome } from "@/lib/simple-income";
 
 export type Currency = "USD" | "EUR" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
 export type TxKind = "opening" | "buy" | "sell" | "income" | "expense";
@@ -126,6 +127,26 @@ export interface CashSheetData {
   /** Доход за смену (маржа обмена по себестоимости) и чистая прибыль. */
   incomeKzt: number;
   netProfitKzt: number;
+  /** Расчёт по остальным валютам (всё кроме доллара): его нет в верхней
+   * таблице, которая по структуре исходного листа показывает только доллар. */
+  otherCurrencies: CashSheetOtherCurrency[];
+}
+
+export interface CashSheetOtherCurrency {
+  currency: Currency;
+  /** Перенос с прошлой смены: >0 — в покупку, <0 — в продажу. */
+  carryInAmount: number;
+  carryInRate: number;
+  boughtAmt: number;
+  avgBuyRate: number;
+  soldAmt: number;
+  avgSellRate: number;
+  /** min(куплено, продано) — объём, на котором получен доход. */
+  matchedAmt: number;
+  incomeKzt: number;
+  /** Остаток со знаком: минус — перепродали. */
+  excessAmt: number;
+  excessRate: number;
 }
 
 const FX: Currency[] = ["USD", "EUR", "RUB", "KGS", "CNY", "GOLD"];
@@ -425,6 +446,39 @@ export function buildDailyReport(
     return { currency: code, amount, avgRate, costKzt: amount * avgRate };
   });
 
+  // Доход по остальным валютам считаем той же формулой, что и по доллару,
+  // — с учётом переноса с прошлой смены.
+  const simpleAll = computeSimpleIncome(
+    txsToFxOps(
+      transactions.map((t) => ({
+        id: t.id,
+        kind: t.kind,
+        ts: t.ts,
+        currency: t.currency,
+        amount: t.amount,
+        rate: t.rate,
+        name: t.name,
+      })),
+    ),
+    carryIn,
+  );
+  const otherCurrencies: CashSheetOtherCurrency[] = Object.values(simpleAll)
+    .filter((r) => r.currency !== "USD" && (r.boughtAmt > 0 || r.soldAmt > 0))
+    .map((r) => ({
+      currency: r.currency as Currency,
+      carryInAmount: r.carryInAmount,
+      carryInRate: r.carryInRate,
+      boughtAmt: r.boughtAmt,
+      avgBuyRate: r.avgBuyRate,
+      soldAmt: r.soldAmt,
+      avgSellRate: r.avgSellRate,
+      matchedAmt: r.matchedAmt,
+      incomeKzt: r.incomeKzt,
+      excessAmt: r.direction === "reserve_spend" ? -r.excessAmt : r.excessAmt,
+      excessRate: r.excessRate,
+    }))
+    .sort((a, b) => b.incomeKzt - a.incomeKzt);
+
   const cashSheet: CashSheetData = {
     usdBuys,
     usdSells,
@@ -439,6 +493,7 @@ export function buildDailyReport(
     currencyTotals,
     incomeKzt: totalFxMarginKzt,
     netProfitKzt,
+    otherCurrencies,
   };
 
   const rows = [...transactions]
@@ -1092,8 +1147,72 @@ function buildCashSheet(wb: ExcelJS.Workbook, data: DailyReportData) {
   });
   put(`K${EXC}`, cs.ostatokUsd >= 0 ? "закуп" : "из резерва", { align: "left", bold: true });
 
+  // --- Остальные валюты ---------------------------------------------------
+  // Верхняя таблица по структуре исходного листа показывает только доллар,
+  // поэтому перенос и доход по рублю, юаню, евро и золоту раньше нигде не
+  // были видны строкой — только в итоговой сумме. Здесь они расписаны так же:
+  // перенос со вчера, обороты дня, закрытый объём, доход и остаток.
+  const OTH_HEAD = EXC + 2;
+  let othEnd = OTH_HEAD;
+  if (cs.otherCurrencies.length > 0) {
+    put(`A${OTH_HEAD - 1}`, "ПЕРЕНОС И ДОХОД ПО ОСТАЛЬНЫМ ВАЛЮТАМ", { bold: true, align: "left" });
+    const headers: [string, string][] = [
+      ["A", "Валюта"],
+      ["B", "Перенос"],
+      ["C", "Курс"],
+      ["D", "Куплено"],
+      ["E", "Ср. курс"],
+      ["F", "Продано"],
+      ["G", "Ср. курс"],
+      ["H", "Закрыто"],
+      ["I", "Доход ₸"],
+      ["J", "Остаток"],
+      ["K", "Курс ост."],
+    ];
+    for (const [col, label] of headers) {
+      put(`${col}${OTH_HEAD}`, label, {
+        bold: true,
+        fill: C_TOTAL,
+        border: THIN,
+        align: "center",
+      });
+    }
+    cs.otherCurrencies.forEach((row, i) => {
+      const r = OTH_HEAD + 1 + i;
+      const nf = row.currency === "GOLD" ? NF_GOLD : NF_KZT;
+      const rateFmt = row.currency === "GOLD" ? NF_KZT : NF_RATE;
+      put(`A${r}`, row.currency, { bold: true, border: THIN, align: "center" });
+      put(`B${r}`, row.carryInAmount || null, { border: THIN, numFmt: nf });
+      put(`C${r}`, row.carryInRate || null, { fill: C_RATE, border: THIN, numFmt: rateFmt });
+      put(`D${r}`, row.boughtAmt || null, { border: THIN, numFmt: nf });
+      put(`E${r}`, row.avgBuyRate || null, { fill: C_RATE, border: THIN, numFmt: rateFmt });
+      put(`F${r}`, row.soldAmt || null, { border: THIN, numFmt: nf });
+      put(`G${r}`, row.avgSellRate || null, { fill: C_RATE, border: THIN, numFmt: rateFmt });
+      put(`H${r}`, row.matchedAmt || null, { border: THIN, numFmt: nf });
+      // Доход формулой — видно, из чего он получился, и пересчитается при правке.
+      put(`I${r}`, { formula: `IF(OR(D${r}=0,F${r}=0),0,(G${r}-E${r})*H${r})` }, {
+        bold: true,
+        fill: C_OST2,
+        border: THIN,
+        numFmt: NF_KZT,
+      });
+      put(`J${r}`, { formula: `D${r}-F${r}` }, { bold: true, fill: C_OST, border: THIN, numFmt: nf });
+      put(`K${r}`, row.excessRate || null, { border: THIN, numFmt: rateFmt });
+    });
+    othEnd = OTH_HEAD + cs.otherCurrencies.length;
+    const sumRow = othEnd + 1;
+    put(`A${sumRow}`, "ИТОГО", { bold: true, align: "left" });
+    put(`I${sumRow}`, { formula: `SUM(I${OTH_HEAD + 1}:I${othEnd})` }, {
+      bold: true,
+      fill: C_SUM,
+      border: THIN,
+      numFmt: NF_KZT,
+    });
+    othEnd = sumRow;
+  }
+
   // --- Счета -------------------------------------------------------------
-  const HEAD = TOT + 9;
+  const HEAD = Math.max(TOT + 9, othEnd + 3);
   const ACC = HEAD + 2;
   put(`A${HEAD}`, "тенге", { align: "left" });
   put(`B${HEAD}`, "плюс", { bold: true, size: 12, align: "left" });
