@@ -28,6 +28,8 @@ export interface MoneySpendLogEntry {
   spendKzt: number;
   /** Доход смены по простой формуле, зафиксированный при «Новый день». */
   incomeKzt: number;
+  /** Рабочая дата смены — по ней группируются периоды. */
+  businessDate: string | null;
   matchedAmount: number;
   carryInAmount: number;
   carryInRate: number;
@@ -50,6 +52,7 @@ export function rowToEntry(r: LogRow): MoneySpendLogEntry {
     avgRate: Number(r.avg_rate),
     spendKzt: Number(r.spend_kzt),
     incomeKzt: Number(r.income_kzt ?? 0),
+    businessDate: r.business_date ?? null,
     matchedAmount: Number(r.matched_amount ?? 0),
     carryInAmount: Number(r.carry_in_amount ?? 0),
     carryInRate: Number(r.carry_in_rate ?? 0),
@@ -89,6 +92,8 @@ export async function recordMoneySpendLog(
    * перенос. Пишется в тот же журнал, чтобы недельные и месячные итоги
    * складывались из закрытых смен, а не пересчитывались заново. */
   simpleRows: SimpleCurrencyIncome[] = [],
+  /** Рабочая дата смены — по ней группируются недельные и месячные итоги. */
+  businessDate?: string,
 ) {
   const simpleByCurrency = new Map(simpleRows.map((r) => [r.currency, r]));
   const payload = rows
@@ -111,6 +116,7 @@ export async function recordMoneySpendLog(
         carry_in_rate: simple?.carryInRate ?? 0,
         matched_amount: simple?.matchedAmt ?? 0,
         income_kzt: simple?.incomeKzt ?? 0,
+        business_date: businessDate ?? null,
         cashier_name: cashierName ?? null,
       };
     });

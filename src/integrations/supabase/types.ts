@@ -619,6 +619,7 @@ export type Database = {
           avg_rate: number
           avg_sell_rate: number
           bought_amount: number
+          business_date: string | null
           carry_in_amount: number
           carry_in_rate: number
           cashier_name: string | null
@@ -639,6 +640,7 @@ export type Database = {
           avg_rate?: number
           avg_sell_rate?: number
           bought_amount?: number
+          business_date?: string | null
           carry_in_amount?: number
           carry_in_rate?: number
           cashier_name?: string | null
@@ -659,6 +661,7 @@ export type Database = {
           avg_rate?: number
           avg_sell_rate?: number
           bought_amount?: number
+          business_date?: string | null
           carry_in_amount?: number
           carry_in_rate?: number
           cashier_name?: string | null
@@ -673,6 +676,24 @@ export type Database = {
           session_start?: string
           sold_amount?: number
           spend_kzt?: number
+        }
+        Relationships: []
+      }
+      session_state: {
+        Row: {
+          business_date: string
+          id: boolean
+          updated_at: string
+        }
+        Insert: {
+          business_date?: string
+          id?: boolean
+          updated_at?: string
+        }
+        Update: {
+          business_date?: string
+          id?: boolean
+          updated_at?: string
         }
         Relationships: []
       }

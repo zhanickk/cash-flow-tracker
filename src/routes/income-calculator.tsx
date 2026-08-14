@@ -22,6 +22,7 @@ import { useCashTransactions } from "@/lib/cash-register";
 import { computeSimpleIncome, totalSimpleIncome } from "@/lib/simple-income";
 import { useSessionCarryIn } from "@/lib/session-carry-in";
 import { useMoneySpendLog } from "@/lib/people-money-spend-log";
+import { dateKeyToDate } from "@/lib/session-date";
 import { txsToFxOps } from "@/lib/fx-people-money-spend";
 
 export const Route = createFileRoute("/income-calculator")({
@@ -111,7 +112,14 @@ function IncomeCalculatorPage() {
   const incomeForPeriod = useMemo(
     () => (fromTs: number, toTs: number) => {
       const closed = spendLog
-        .filter((e) => e.sessionStart >= fromTs && e.sessionStart <= toTs)
+        .filter((e) => {
+          // Группируем по рабочей дате смены: она задаётся явно и не зависит
+          // от того, во сколько смену открыли и закрыли.
+          const ts = e.businessDate
+            ? dateKeyToDate(e.businessDate).getTime()
+            : e.sessionStart;
+          return ts >= fromTs && ts <= toTs;
+        })
         .reduce((sum, e) => sum + e.incomeKzt, 0);
       const liveInPeriod = sessionFromTs >= fromTs && sessionFromTs <= toTs ? liveIncomeKzt : 0;
       return closed + liveInPeriod;

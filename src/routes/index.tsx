@@ -65,7 +65,6 @@ import {
   downloadExcelBuffer,
   pickReportsDirectory,
   saveExcelToDirectory,
-  todayDateKey,
   type DailyReportData,
 } from "@/lib/daily-report";
 import { buildSummaryReportWorkbook, summaryReportFileBaseName } from "@/lib/summary-report";
@@ -89,6 +88,14 @@ import { useFxCurrencies, useFxSales } from "@/lib/fx-sales";
 import { computeSessionExcessByCurrency, txsToFxOps } from "@/lib/fx-people-money-spend";
 import { carryOutFrom, computeSimpleIncome, totalSimpleIncome } from "@/lib/simple-income";
 import { useSessionCarryIn } from "@/lib/session-carry-in";
+import {
+  dateKeyToDate,
+  formatDateKeyRu,
+  nextDateKey,
+  setSessionDate,
+  toDateKey,
+  useSessionDate,
+} from "@/lib/session-date";
 import { buildIncomeSummary, computeInventoryCostBasis } from "@/lib/income-calculator";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
@@ -265,17 +272,16 @@ function Index() {
     () => (transactions.length > 0 ? Math.min(...transactions.map((t) => t.ts)) : Date.now()),
     [transactions],
   );
-  const sessionDateKey = useMemo(() => todayDateKey(new Date(sessionFromTs)), [sessionFromTs]);
-  const sessionDateLabel = useMemo(
-    () =>
-      new Date(sessionFromTs).toLocaleDateString("ru-RU", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      }),
-    [sessionFromTs],
+  // Рабочая дата смены хранится явно в базе: касса может быть открыта на
+  // завтра ещё до полуночи, а забытый вовремя «Новый день» иначе слепил бы
+  // операции двух рабочих дней в одну дату. Дата первой операции остаётся
+  // запасным вариантом, если в базе ещё ничего не проставлено.
+  const { data: storedSessionDate } = useSessionDate();
+  const sessionDateKey = useMemo(
+    () => storedSessionDate ?? toDateKey(new Date(sessionFromTs)),
+    [storedSessionDate, sessionFromTs],
   );
+  const sessionDateLabel = useMemo(() => formatDateKeyRu(sessionDateKey), [sessionDateKey]);
 
   const addCashTx = useAddCashTransaction();
   const updateCashTx = useUpdateCashTransaction();
@@ -303,6 +309,10 @@ function Index() {
   const [newDayOpen, setNewDayOpen] = useState(false);
   const [newDayPin, setNewDayPin] = useState("");
   const [newDayPinError, setNewDayPinError] = useState("");
+  // Дата открываемой смены — по умолчанию следующая за текущей рабочей.
+  // Ограничения «не позже сегодняшнего» намеренно нет: кассу открывают на
+  // завтра ещё вечером.
+  const [newDayDate, setNewDayDate] = useState("");
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const { session } = useSession();
@@ -492,7 +502,7 @@ function Index() {
       // — тот же принцип, что и для шапки страницы: пока не нажали "Новый
       // день", отчёт остаётся датирован тем днём, когда касса реально была
       // открыта.
-      const reportDate = new Date(sessionFromTs);
+      const reportDate = dateKeyToDate(sessionDateKey);
       const contactAccounts = contactsWithBalances
         .map((c) => ({
           name: c.name,
@@ -558,6 +568,13 @@ function Index() {
     }
   }
 
+  function openNewDayDialog() {
+    setNewDayDate(nextDateKey(sessionDateKey));
+    setNewDayPin("");
+    setNewDayPinError("");
+    setNewDayOpen(true);
+  }
+
   function tryNewDay() {
     if (!reportDoneToday) {
       setNewDayPinError("Сначала сформируйте дневной отчёт за сегодня");
@@ -596,6 +613,7 @@ function Index() {
     // (ср.курс продажи − ср.курс покупки) × min(куплено, продано), а
     // неперекрытый остаток уезжает в следующую смену обычной операцией.
     const simple = computeSimpleIncome(txsToFxOps(transactions), carryIn);
+    const openedDate = newDayDate || nextDateKey(sessionDateKey);
     newDayCashRegister.mutate({
       openings,
       excessBuys,
@@ -603,6 +621,8 @@ function Index() {
       sessionStart: sessionFromTs,
       simpleRows: Object.values(simple),
       carryOut: carryOutFrom(simple),
+      closingBusinessDate: sessionDateKey,
+      openingBusinessDate: openedDate,
     });
     localStorage.removeItem(REPORT_DONE_KEY);
     setReportDoneToday(false);
@@ -822,11 +842,7 @@ function Index() {
                 ? "Перенести остатки на новый день"
                 : "Сначала сформируйте дневной отчёт"
             }
-            onClick={() => {
-              setNewDayPin("");
-              setNewDayPinError("");
-              setNewDayOpen(true);
-            }}
+            onClick={openNewDayDialog}
           >
             <Sunrise className="h-5 w-5" />
             Новый день
@@ -978,6 +994,17 @@ function Index() {
               только после дневного отчёта. PIN: 0000
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Дата новой смены</label>
+            <Input
+              type="date"
+              value={newDayDate}
+              onChange={(e) => setNewDayDate(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Можно поставить завтрашнюю дату заранее — календарного ограничения нет.
+            </p>
+          </div>
           <Input
             type="password"
             inputMode="numeric"
