@@ -697,6 +697,24 @@ export type Database = {
         }
         Relationships: []
       }
+      currency_cost_basis: {
+        Row: {
+          avg_buy_rate: number
+          currency_code: string
+          updated_at: string
+        }
+        Insert: {
+          avg_buy_rate?: number
+          currency_code: string
+          updated_at?: string
+        }
+        Update: {
+          avg_buy_rate?: number
+          currency_code?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       session_carry_in: {
         Row: {
           amount: number

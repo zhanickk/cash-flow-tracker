@@ -89,6 +89,7 @@ import { useFxCurrencies, useFxSales } from "@/lib/fx-sales";
 import { computeSessionExcessByCurrency, txsToFxOps } from "@/lib/fx-people-money-spend";
 import { carryOutFrom, computeSimpleIncome, totalSimpleIncome } from "@/lib/simple-income";
 import { useSessionCarryIn } from "@/lib/session-carry-in";
+import { useCurrencyCostBasis } from "@/lib/currency-cost-basis";
 import {
   dateKeyToDate,
   formatDateKeyRu,
@@ -97,7 +98,7 @@ import {
   toDateKey,
   useSessionDate,
 } from "@/lib/session-date";
-import { buildIncomeSummary, computeInventoryCostBasis } from "@/lib/income-calculator";
+import { buildIncomeSummary } from "@/lib/income-calculator";
 import { useSession, useCurrentCashier, useLogout } from "@/lib/auth";
 import { CashierManagementDialog } from "@/components/cashier-management-dialog";
 import { LogOut } from "lucide-react";
@@ -333,6 +334,9 @@ function Index() {
   // Перенос остатка с прошлой смены — участвует в расчёте дохода как обычная
   // операция (излишек закупа в покупки, перепродажа в продажи).
   const { data: carryIn = [] } = useSessionCarryIn();
+  // Курс закупа по валютам — известен всегда, даже если валюта давно не
+  // торговалась и выпала из переноса.
+  const { data: costBasis = {} } = useCurrencyCostBasis();
   const addContactTx = useAddContactTransaction();
   const deleteContactTx = useDeleteContactTransaction();
   const updateContactTx = useUpdateContactTransaction();
@@ -549,10 +553,15 @@ function Index() {
         .filter((c) => Object.values(c.balances).some((v) => (v ?? 0) !== 0));
       // Средневзвешенная себестоимость остатка по валютам — «сколько денег
       // вкладчиков вложено в то, что сейчас лежит в кассе».
-      const inventory = computeInventoryCostBasis(fxPurchasesAll, fxSalesAll);
+      // Остатки валют оцениваем по постоянно хранимому курсу закупа. Раньше
+      // брали средневзвешенную из журнала покупок, но у валюты, купленной
+      // давно и не тронутой с тех пор, журнал мог этого курса уже не знать.
       const inventoryAvgRate: Partial<Record<Currency, number>> = {};
-      for (const [code, basis] of Object.entries(inventory)) {
-        inventoryAvgRate[code as Currency] = basis.avgRate;
+      for (const [code, rate] of Object.entries(costBasis)) {
+        if (rate > 0) inventoryAvgRate[code as Currency] = rate;
+      }
+      for (const row of Object.values(simpleRows)) {
+        if (row.avgBuyRate > 0) inventoryAvgRate[row.currency as Currency] = row.avgBuyRate;
       }
       const data = buildDailyReport(
         transactions,

@@ -23,6 +23,7 @@ import { getCachedCashierName } from "@/lib/auth";
 import { recordMoneySpendLog } from "@/lib/people-money-spend-log";
 import { replaceSessionCarryIn, CARRY_IN_KEY } from "@/lib/session-carry-in";
 import { setSessionDate, SESSION_DATE_KEY } from "@/lib/session-date";
+import { updateCostBasis, COST_BASIS_KEY } from "@/lib/currency-cost-basis";
 import type { CarryIn, SimpleCurrencyIncome } from "@/lib/simple-income";
 import type { PeopleMoneySpendDay } from "@/lib/fx-people-money-spend";
 
@@ -442,6 +443,9 @@ export function useNewDayCashRegister() {
       // перенос целиком, чтобы там не осталось позавчерашних строк.
       await replaceSessionCarryIn(carryOut);
       if (openingBusinessDate) await setSessionDate(openingBusinessDate);
+      // Курс закупа держим отдельно от переноса: перенос у простаивающей
+      // валюты исчезает, а себестоимость её запаса — нет.
+      await updateCostBasis(simpleRows);
       await insertHistory({
         action: "reset",
         summary: `НОВЫЙ ДЕНЬ — остатки перенесены (${openings.length} валют)${
@@ -459,6 +463,7 @@ export function useNewDayCashRegister() {
       qc.invalidateQueries({ queryKey: ["people-money-spend-log"] });
       qc.invalidateQueries({ queryKey: CARRY_IN_KEY });
       qc.invalidateQueries({ queryKey: SESSION_DATE_KEY });
+      qc.invalidateQueries({ queryKey: COST_BASIS_KEY });
     },
   });
 }
