@@ -65,6 +65,7 @@ export function ContactBalanceHoverCard({
     KZT: kztBalance ?? 0,
     USD: usdBalance ?? 0,
     EUR: 0,
+    GBP: 0,
     RUB: 0,
     KGS: 0,
     CNY: 0,

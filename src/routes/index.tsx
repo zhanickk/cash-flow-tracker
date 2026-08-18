@@ -202,12 +202,14 @@ function ratePlaceholder(currency: Currency): string {
   if (currency === "RUB" || currency === "KGS") return "4.0000";
   if (currency === "CNY") return "47.0000";
   if (currency === "USD" || currency === "EUR") return "470.0000";
+  if (currency === "GBP") return "620.0000";
   return "Курс";
 }
 
 const CURRENCY_FLAG: Record<Currency, string> = {
   USD: "🇺🇸",
   EUR: "🇪🇺",
+  GBP: "🇬🇧",
   RUB: "🇷🇺",
   KGS: "🇰🇬",
   CNY: "🇨🇳",
@@ -347,7 +349,7 @@ function Index() {
   }, [contactsWithBalances]);
 
   const totals = useMemo(() => {
-    const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, RUB: 0, KGS: 0, CNY: 0, GOLD: 0 };
+    const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, GBP: 0, RUB: 0, KGS: 0, CNY: 0, GOLD: 0 };
     for (const tx of transactions) {
       const d = txDeltas(tx);
       for (const [k, v] of Object.entries(d)) t[k as Currency] += v || 0;

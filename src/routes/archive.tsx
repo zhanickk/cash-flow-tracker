@@ -80,7 +80,7 @@ function ArchivePage() {
 
   /** Остатки того дня — та же арифметика, что в кассе. */
   const dayTotals = useMemo(() => {
-    const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, RUB: 0, KGS: 0, CNY: 0, GOLD: 0 };
+    const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, GBP: 0, RUB: 0, KGS: 0, CNY: 0, GOLD: 0 };
     for (const tx of dayTxs) {
       const r = tx.rate || 0;
       if (tx.kind === "opening" || tx.kind === "income") t[tx.currency] += tx.amount;

@@ -3,7 +3,7 @@ import type { CarryIn } from "@/lib/simple-income";
 import { peopleMoneySpendFromReportTxs, txsToFxOps } from "@/lib/fx-people-money-spend";
 import { computeSimpleIncome } from "@/lib/simple-income";
 
-export type Currency = "USD" | "EUR" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
+export type Currency = "USD" | "EUR" | "GBP" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
 export type TxKind = "opening" | "buy" | "sell" | "income" | "expense";
 
 export interface ReportTransaction {
@@ -149,8 +149,8 @@ export interface CashSheetOtherCurrency {
   excessRate: number;
 }
 
-const FX: Currency[] = ["USD", "EUR", "RUB", "KGS", "CNY", "GOLD"];
-const ALL: Currency[] = ["KZT", "USD", "EUR", "RUB", "KGS", "CNY", "GOLD"];
+const FX: Currency[] = ["USD", "EUR", "GBP", "RUB", "KGS", "CNY", "GOLD"];
+const ALL: Currency[] = ["KZT", "USD", "EUR", "GBP", "RUB", "KGS", "CNY", "GOLD"];
 
 const KIND_LABEL: Record<TxKind, string> = {
   opening: "Остаток",
@@ -267,6 +267,7 @@ export function buildDailyReport(
     KZT: 0,
     USD: 0,
     EUR: 0,
+    GBP: 0,
     RUB: 0,
     KGS: 0,
     CNY: 0,

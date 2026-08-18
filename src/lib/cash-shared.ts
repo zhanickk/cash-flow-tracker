@@ -1,11 +1,12 @@
 /** Shared types & helpers for the cash register, used both by the UI route
  * and by the Supabase-backed data layer (cash-register.ts). */
 
-export type Currency = "USD" | "EUR" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
+export type Currency = "USD" | "EUR" | "GBP" | "RUB" | "KGS" | "CNY" | "GOLD" | "KZT";
 
 export const CURRENCIES: { code: Currency; label: string; short: string; symbol: string }[] = [
   { code: "USD", label: "Доллар (USD)", short: "USD", symbol: "$" },
   { code: "EUR", label: "Евро (EUR)", short: "EUR", symbol: "€" },
+  { code: "GBP", label: "Фунт (GBP)", short: "GBP", symbol: "£" },
   { code: "RUB", label: "Рубль (RUB)", short: "RUB", symbol: "₽" },
   { code: "KGS", label: "Сом (KGS)", short: "KGS", symbol: "с" },
   { code: "CNY", label: "Юань (CNY)", short: "CNY", symbol: "¥" },

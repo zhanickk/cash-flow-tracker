@@ -7,6 +7,7 @@ export const CONTACT_CURRENCIES = CURRENCIES;
 const CURRENCY_FLAG: Record<ContactCurrency, string> = {
   USD: "🇺🇸",
   EUR: "🇪🇺",
+  GBP: "🇬🇧",
   RUB: "🇷🇺",
   KGS: "🇰🇬",
   CNY: "🇨🇳",
