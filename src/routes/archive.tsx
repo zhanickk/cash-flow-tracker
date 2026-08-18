@@ -30,11 +30,23 @@ import { useMoneySpendLog } from "@/lib/people-money-spend-log";
 import { formatDateKeyRu, useSessionDate } from "@/lib/session-date";
 import {
   applyChain,
+  carryInBefore,
   currentChain,
   logPastDayEdit,
   previewChain,
   type DayIncome,
 } from "@/lib/past-day-recalc";
+import {
+  buildDailyReport,
+  buildReportWorkbook,
+  downloadExcelBuffer,
+  type Currency as ReportCurrency,
+} from "@/lib/daily-report";
+import { computeSimpleIncome, totalSimpleIncome } from "@/lib/simple-income";
+import { txsToFxOps } from "@/lib/fx-people-money-spend";
+import { useCurrencyCostBasis } from "@/lib/currency-cost-basis";
+import { dateKeyToDate } from "@/lib/session-date";
+import { FileSpreadsheet } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/archive")({
@@ -76,7 +88,65 @@ function ArchivePage() {
     return m;
   }, [contacts]);
 
+  const { data: costBasis = {} } = useCurrencyCostBasis();
+  const [reportBusy, setReportBusy] = useState(false);
+
   const byKind = (kind: Transaction["kind"]) => dayTxs.filter((t) => t.kind === kind);
+
+  /**
+   * Отчёт по архивной смене. Строится из того, что лежит в базе СЕЙЧАС, —
+   * значит все правки, сделанные в архиве, в него уже попали. Перенос берём
+   * из журнала предыдущего дня, а не из session_carry_in: тот относится к
+   * текущей открытой смене и к прошлому дню отношения не имеет.
+   */
+  async function downloadDayReport() {
+    if (!openDate) return;
+    setReportBusy(true);
+    try {
+      const carry = await carryInBefore(openDate);
+      const simpleRows = computeSimpleIncome(txsToFxOps(dayTxs), carry);
+      const incomeKzt = totalSimpleIncome(simpleRows);
+      const expensesKzt = dayTxs
+        .filter((t) => t.kind === "expense" && t.expenseType !== "person" && t.currency === "KZT")
+        .reduce((sum, t) => sum + t.amount, 0);
+
+      const marginByCurrency: Record<string, number> = {};
+      const inventoryAvgRate: Partial<Record<ReportCurrency, number>> = {};
+      for (const [code, rate] of Object.entries(costBasis)) {
+        if (rate > 0) inventoryAvgRate[code as ReportCurrency] = rate;
+      }
+      for (const row of Object.values(simpleRows)) {
+        marginByCurrency[row.currency] = row.incomeKzt;
+        if (row.avgBuyRate > 0) inventoryAvgRate[row.currency as ReportCurrency] = row.avgBuyRate;
+      }
+
+      const contactAccounts = contacts
+        .map((c) => ({
+          name: c.name,
+          usdBalance: c.balances.USD ?? 0,
+          kztBalance: c.balances.KZT ?? 0,
+        }))
+        .filter((c) => c.usdBalance !== 0 || c.kztBalance !== 0);
+      const contactBalances = contacts
+        .map((c) => ({ name: c.name, balances: c.balances }))
+        .filter((c) => Object.values(c.balances).some((v) => (v ?? 0) !== 0));
+
+      const data = buildDailyReport(
+        dayTxs as never,
+        dayTotals as never,
+        { fxMarginKzt: incomeKzt, expensesKzt, marginByCurrency },
+        dateKeyToDate(openDate),
+        contactAccounts,
+        contactBalances,
+        inventoryAvgRate,
+        carry,
+      );
+      const buffer = await buildReportWorkbook(data);
+      downloadExcelBuffer(buffer, data.fileBaseName);
+    } finally {
+      setReportBusy(false);
+    }
+  }
 
   /** Остатки того дня — та же арифметика, что в кассе. */
   const dayTotals = useMemo(() => {
@@ -312,6 +382,16 @@ function ArchivePage() {
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => { setOpenDate(null); setEditMode(false); }}>
                     К списку
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1"
+                    onClick={downloadDayReport}
+                    disabled={reportBusy}
+                  >
+                    <FileSpreadsheet className="h-3.5 w-3.5" />
+                    {reportBusy ? "Формируем…" : "Отчёт"}
                   </Button>
                   {!editMode && (
                     <Button size="sm" variant="outline" className="gap-1" onClick={() => setPinOpen(true)}>

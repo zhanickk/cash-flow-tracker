@@ -52,7 +52,7 @@ async function loadDaysFrom(fromDate: string): Promise<Map<string, Transaction[]
 
 /** Перенос, с которым стартовала указанная дата — это остаток предыдущей
  * смены, лежащий в журнале. */
-async function carryInBefore(date: string): Promise<CarryIn[]> {
+export async function carryInBefore(date: string): Promise<CarryIn[]> {
   const { data, error } = await supabase
     .from("people_money_spend_log")
     .select("*")
