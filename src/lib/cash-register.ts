@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
 import { type Transaction, type HistoryEntry, txLabel } from "@/lib/cash-shared";
 import { allocationForSellInsert, recomputeUsdSaleAllocations } from "@/lib/fx-allocation-persist";
@@ -82,13 +83,17 @@ export function useCashTransactions(businessDate?: string) {
         if (stErr) throw stErr;
         date = st?.business_date ?? undefined;
       }
-      let q = supabase.from("cash_transactions").select("*").order("ts", { ascending: true });
-      // Строки без даты — наследие до появления архива, они принадлежат
-      // текущей смене.
-      q = date ? q.or(`business_date.eq.${date},business_date.is.null`) : q;
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []).map(rowToTx);
+      // Постранично: PostgREST отдаёт максимум 1000 строк за запрос, а
+      // операции больше не удаляются — за смену их бывает больше сотни, и
+      // без пагинации часть молча терялась бы.
+      const rows = await fetchAllRows<CashTxRow>((from, to) => {
+        let q = supabase.from("cash_transactions").select("*").order("ts", { ascending: true });
+        // Строки без даты — наследие до появления архива, они принадлежат
+        // текущей смене.
+        if (date) q = q.or(`business_date.eq.${date},business_date.is.null`);
+        return q.range(from, to);
+      });
+      return rows.map(rowToTx);
     },
   });
 }
@@ -98,13 +103,18 @@ export function useArchivedDays() {
   return useQuery({
     queryKey: ["archived-days"],
     queryFn: async (): Promise<string[]> => {
-      const { data, error } = await supabase
-        .from("cash_transactions")
-        .select("business_date")
-        .not("business_date", "is", null);
-      if (error) throw error;
+      // Тоже постранично: архив копится и уже через пару недель перевалит за
+      // 1000 строк, после чего часть дней просто пропала бы из списка.
+      const rows = await fetchAllRows<{ business_date: string | null }>((from, to) =>
+        supabase
+          .from("cash_transactions")
+          .select("business_date")
+          .not("business_date", "is", null)
+          .order("business_date", { ascending: false })
+          .range(from, to),
+      );
       const set = new Set<string>();
-      for (const r of data ?? []) if (r.business_date) set.add(r.business_date);
+      for (const r of rows) if (r.business_date) set.add(r.business_date);
       return [...set].sort((a, b) => b.localeCompare(a));
     },
   });

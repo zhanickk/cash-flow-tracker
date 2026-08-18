@@ -1,6 +1,10 @@
 import { supabase } from "@/integrations/supabase/client";
 import { getCachedCashierName } from "@/lib/auth";
 import { rowToTx } from "@/lib/cash-register";
+import { fetchAllRows } from "@/lib/supabase-paginate";
+import type { Tables } from "@/integrations/supabase/types";
+
+type CashTxRow = Tables<"cash_transactions">;
 import type { Transaction } from "@/lib/cash-shared";
 import { txsToFxOps } from "@/lib/fx-people-money-spend";
 import {
@@ -32,15 +36,19 @@ export interface DayIncome {
 
 /** Операции всех смен начиная с указанной даты, сгруппированные по дате. */
 async function loadDaysFrom(fromDate: string): Promise<Map<string, Transaction[]>> {
-  const { data, error } = await supabase
-    .from("cash_transactions")
-    .select("*")
-    .gte("business_date", fromDate)
-    .order("ts", { ascending: true });
-  if (error) throw error;
+  // Постранично: пересчёт может захватить много дней сразу, а PostgREST
+  // отдаёт максимум 1000 строк за запрос.
+  const data = await fetchAllRows<CashTxRow>((from, to) =>
+    supabase
+      .from("cash_transactions")
+      .select("*")
+      .gte("business_date", fromDate)
+      .order("ts", { ascending: true })
+      .range(from, to),
+  );
 
   const byDate = new Map<string, Transaction[]>();
-  for (const row of data ?? []) {
+  for (const row of data) {
     const date = row.business_date;
     if (!date) continue;
     const list = byDate.get(date) ?? [];
