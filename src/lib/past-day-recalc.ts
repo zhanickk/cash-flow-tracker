@@ -61,11 +61,15 @@ async function loadDaysFrom(fromDate: string): Promise<Map<string, Transaction[]
 /** Перенос, с которым стартовала указанная дата — это остаток предыдущей
  * смены, лежащий в журнале. */
 export async function carryInBefore(date: string): Promise<CarryIn[]> {
+  // Нужна лишь последняя запись по каждой валюте, поэтому берём свежие
+  // строки сверху и ограничиваем выборку: иначе с ростом журнала запрос
+  // упёрся бы в потолок ответа и перенос стал бы неполным.
   const { data, error } = await supabase
     .from("people_money_spend_log")
     .select("*")
     .lt("business_date", date)
-    .order("business_date", { ascending: false });
+    .order("business_date", { ascending: false })
+    .limit(200);
   if (error) throw error;
   // По КАЖДОЙ валюте берём её последнюю запись до этой даты, а не строки
   // одного предыдущего дня. Иначе валюта, не торговавшаяся в тот день,

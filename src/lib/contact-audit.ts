@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
 export type ContactAuditEntry = Tables<"contact_audit_log">;
@@ -11,14 +12,17 @@ export function useContactAuditLog() {
   return useQuery({
     queryKey: AUDIT_KEY,
     queryFn: async (): Promise<ContactAuditEntry[]> => {
-      const { data, error } = await supabase
-        .from("contact_audit_log")
-        .select("*")
-        .order("occurred_at", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(2000);
-      if (error) throw error;
-      return data ?? [];
+      // Постранично: в журнале уже почти 2000 записей, а один ответ отдаёт
+      // максимум 1000 — .limit(2000) молча обрезался, и старые записи в
+      // историю не попадали.
+      return await fetchAllRows<ContactAuditEntry>((from, to) =>
+        supabase
+          .from("contact_audit_log")
+          .select("*")
+          .order("occurred_at", { ascending: false })
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      );
     },
   });
 }
