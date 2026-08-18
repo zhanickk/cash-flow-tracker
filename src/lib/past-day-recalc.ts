@@ -59,12 +59,16 @@ async function carryInBefore(date: string): Promise<CarryIn[]> {
     .lt("business_date", date)
     .order("business_date", { ascending: false });
   if (error) throw error;
-  const rows = data ?? [];
-  if (rows.length === 0) return [];
-
-  const prevDate = rows[0].business_date;
-  return rows
-    .filter((r) => r.business_date === prevDate && Number(r.excess_amount) > 0)
+  // По КАЖДОЙ валюте берём её последнюю запись до этой даты, а не строки
+  // одного предыдущего дня. Иначе валюта, не торговавшаяся в тот день,
+  // выпадает из переноса вместе со своей себестоимостью — ровно так
+  // потерялось золото (780 г в кассе против 10 г в цепочке).
+  const latestByCurrency = new Map<string, (typeof data)[number]>();
+  for (const r of data ?? []) {
+    if (!latestByCurrency.has(r.currency_code)) latestByCurrency.set(r.currency_code, r);
+  }
+  return [...latestByCurrency.values()]
+    .filter((r) => Number(r.excess_amount) > 0 && Number(r.avg_rate) > 0)
     .map((r) => ({
       currency: r.currency_code,
       amount:
