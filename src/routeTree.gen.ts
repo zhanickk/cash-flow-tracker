@@ -17,6 +17,7 @@ import { Route as FxSalesRouteImport } from './routes/fx-sales'
 import { Route as FxRiskRouteImport } from './routes/fx-risk'
 import { Route as CurrencyBalanceRouteImport } from './routes/currency-balance'
 import { Route as ContactsFullRouteImport } from './routes/contacts-full'
+import { Route as ArchiveRouteImport } from './routes/archive'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ContactsIndexRouteImport } from './routes/contacts.index'
 import { Route as ContactsContactIdRouteImport } from './routes/contacts.$contactId'
@@ -61,6 +62,11 @@ const ContactsFullRoute = ContactsFullRouteImport.update({
   path: '/contacts-full',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ArchiveRoute = ArchiveRouteImport.update({
+  id: '/archive',
+  path: '/archive',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -79,6 +85,7 @@ const ContactsContactIdRoute = ContactsContactIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/archive': typeof ArchiveRoute
   '/contacts-full': typeof ContactsFullRoute
   '/currency-balance': typeof CurrencyBalanceRoute
   '/fx-risk': typeof FxRiskRoute
@@ -92,6 +99,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/archive': typeof ArchiveRoute
   '/contacts-full': typeof ContactsFullRoute
   '/currency-balance': typeof CurrencyBalanceRoute
   '/fx-risk': typeof FxRiskRoute
@@ -106,6 +114,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/archive': typeof ArchiveRoute
   '/contacts-full': typeof ContactsFullRoute
   '/currency-balance': typeof CurrencyBalanceRoute
   '/fx-risk': typeof FxRiskRoute
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/archive'
     | '/contacts-full'
     | '/currency-balance'
     | '/fx-risk'
@@ -134,6 +144,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/archive'
     | '/contacts-full'
     | '/currency-balance'
     | '/fx-risk'
@@ -147,6 +158,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/archive'
     | '/contacts-full'
     | '/currency-balance'
     | '/fx-risk'
@@ -161,6 +173,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ArchiveRoute: typeof ArchiveRoute
   ContactsFullRoute: typeof ContactsFullRoute
   CurrencyBalanceRoute: typeof CurrencyBalanceRoute
   FxRiskRoute: typeof FxRiskRoute
@@ -231,6 +244,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContactsFullRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/archive': {
+      id: '/archive'
+      path: '/archive'
+      fullPath: '/archive'
+      preLoaderRoute: typeof ArchiveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -257,6 +277,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ArchiveRoute: ArchiveRoute,
   ContactsFullRoute: ContactsFullRoute,
   CurrencyBalanceRoute: CurrencyBalanceRoute,
   FxRiskRoute: FxRiskRoute,

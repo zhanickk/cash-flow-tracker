@@ -33,7 +33,7 @@ export type CashHistoryRow = Tables<"cash_register_history">;
 const TX_KEY = ["cash-transactions"];
 const HISTORY_KEY = ["cash-history"];
 
-function rowToTx(r: CashTxRow): Transaction {
+export function rowToTx(r: CashTxRow): Transaction {
   return {
     id: r.id,
     kind: r.kind as Transaction["kind"],
@@ -60,16 +60,52 @@ function rowToHistory(r: CashHistoryRow): HistoryEntry {
 
 /* ============== Reads ============== */
 
-export function useCashTransactions() {
+/**
+ * Операции смены. Без аргумента — текущая открытая смена; с датой — архивная.
+ *
+ * Операции больше не удаляются при «Новый день», а остаются в базе с рабочей
+ * датой, поэтому читать таблицу целиком нельзя: без фильтра касса показала бы
+ * все дни разом. Дату берём из session_state, чтобы она совпадала с той, что
+ * стоит в шапке.
+ */
+export function useCashTransactions(businessDate?: string) {
   return useQuery({
-    queryKey: TX_KEY,
+    queryKey: businessDate ? [...TX_KEY, businessDate] : TX_KEY,
     queryFn: async (): Promise<Transaction[]> => {
-      const { data, error } = await supabase
-        .from("cash_transactions")
-        .select("*")
-        .order("ts", { ascending: true });
+      let date = businessDate;
+      if (!date) {
+        const { data: st, error: stErr } = await supabase
+          .from("session_state")
+          .select("business_date")
+          .eq("id", true)
+          .maybeSingle();
+        if (stErr) throw stErr;
+        date = st?.business_date ?? undefined;
+      }
+      let q = supabase.from("cash_transactions").select("*").order("ts", { ascending: true });
+      // Строки без даты — наследие до появления архива, они принадлежат
+      // текущей смене.
+      q = date ? q.or(`business_date.eq.${date},business_date.is.null`) : q;
+      const { data, error } = await q;
       if (error) throw error;
       return (data ?? []).map(rowToTx);
+    },
+  });
+}
+
+/** Даты смен, попавшие в архив, от новых к старым. */
+export function useArchivedDays() {
+  return useQuery({
+    queryKey: ["archived-days"],
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await supabase
+        .from("cash_transactions")
+        .select("business_date")
+        .not("business_date", "is", null);
+      if (error) throw error;
+      const set = new Set<string>();
+      for (const r of data ?? []) if (r.business_date) set.add(r.business_date);
+      return [...set].sort((a, b) => b.localeCompare(a));
     },
   });
 }
@@ -345,12 +381,21 @@ export function useResetCashRegister() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
-        .from("cash_transactions")
-        .delete()
-        .not("id", "is", null);
+      // Чистим только текущую смену: архив прошлых дней не трогаем.
+      const { data: st } = await supabase
+        .from("session_state")
+        .select("business_date")
+        .eq("id", true)
+        .maybeSingle();
+      const date = st?.business_date;
+      let q = supabase.from("cash_transactions").delete();
+      q = date ? q.or(`business_date.eq.${date},business_date.is.null`) : q.is("business_date", null);
+      const { error } = await q;
       if (error) throw error;
-      await insertHistory({ action: "reset", summary: "КАССА ПЕРЕЗАПУЩЕНА — все операции очищены" });
+      await insertHistory({
+        action: "reset",
+        summary: "КАССА ПЕРЕЗАПУЩЕНА — операции текущей смены очищены",
+      });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: TX_KEY });
@@ -402,11 +447,16 @@ export function useNewDayCashRegister() {
       /** Рабочая дата открываемой смены (может быть впереди календаря). */
       openingBusinessDate?: string;
     }) => {
-      const { error: delErr } = await supabase
-        .from("cash_transactions")
-        .delete()
-        .not("id", "is", null);
-      if (delErr) throw delErr;
+      // Операции закрывающейся смены НЕ удаляем — помечаем её рабочей датой и
+      // оставляем в архиве, чтобы день можно было открыть и исправить. Раньше
+      // они стирались, и ошибку прошлого дня уже нечем было поправить.
+      if (closingBusinessDate) {
+        const { error: stampErr } = await supabase
+          .from("cash_transactions")
+          .update({ business_date: closingBusinessDate })
+          .is("business_date", null);
+        if (stampErr) throw stampErr;
+      }
       if (openings.length > 0) {
         const { error: insErr } = await supabase.from("cash_transactions").insert(
           openings.map((o) => ({
@@ -415,6 +465,7 @@ export function useNewDayCashRegister() {
             currency: o.currency,
             amount: o.amount,
             name: o.name ?? null,
+            business_date: openingBusinessDate ?? null,
           })),
         );
         if (insErr) throw insErr;

@@ -65,6 +65,7 @@ export type Database = {
       cash_transactions: {
         Row: {
           amount: number
+          business_date: string | null
           contact_tx_id: string | null
           created_at: string
           currency: string
@@ -79,6 +80,7 @@ export type Database = {
         }
         Insert: {
           amount: number
+          business_date?: string | null
           contact_tx_id?: string | null
           created_at?: string
           currency: string
@@ -93,6 +95,7 @@ export type Database = {
         }
         Update: {
           amount?: number
+          business_date?: string | null
           contact_tx_id?: string | null
           created_at?: string
           currency?: string
@@ -582,6 +585,39 @@ export type Database = {
             referencedColumns: ["code"]
           },
         ]
+      }
+      past_day_edit_log: {
+        Row: {
+          action: string
+          after_value: Json | null
+          before_value: Json | null
+          business_date: string
+          cashier_name: string | null
+          created_at: string
+          id: string
+          summary: string
+        }
+        Insert: {
+          action: string
+          after_value?: Json | null
+          before_value?: Json | null
+          business_date: string
+          cashier_name?: string | null
+          created_at?: string
+          id?: string
+          summary: string
+        }
+        Update: {
+          action?: string
+          after_value?: Json | null
+          before_value?: Json | null
+          business_date?: string
+          cashier_name?: string | null
+          created_at?: string
+          id?: string
+          summary?: string
+        }
+        Relationships: []
       }
       payroll_employees: {
         Row: {

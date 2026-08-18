@@ -974,6 +974,12 @@ function Index() {
               Трата Жұрттың ақшасы
             </Link>
           </Button>
+          <Button variant="outline" className="w-full gap-2 sm:col-span-2" asChild>
+            <Link to="/archive">
+              <History className="h-4 w-4" />
+              Архив смен (правка прошлых дней)
+            </Link>
+          </Button>
         </div>
         <div className="lg:col-span-2">
           <Button
