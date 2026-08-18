@@ -2072,14 +2072,14 @@ function GroupedTxList({
 
 /* ============== Quadrants ============== */
 
-interface AddProps {
+export interface AddProps {
   txs: Transaction[];
   onAdd: (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => void;
   onUpdate: (id: string, patch: Partial<Transaction>) => void;
   onDelete: (id: string) => void;
 }
 
-function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
+export function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("KZT");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
@@ -2157,7 +2157,7 @@ function OpeningCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   );
 }
 
-function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
+export function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
@@ -2228,7 +2228,7 @@ function BuyCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   );
 }
 
-function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
+export function SellCard({ txs, onAdd, onUpdate, onDelete }: AddProps) {
   const [currency, setCurrency] = useState<Currency>("USD");
   const [amount, setAmount] = useState("");
   const [rate, setRate] = useState("");
@@ -2416,7 +2416,7 @@ function ContactAutocompleteField({
   );
 }
 
-interface ContactAddProps extends Omit<AddProps, "onAdd"> {
+export interface ContactAddProps extends Omit<AddProps, "onAdd"> {
   onAdd: (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => void | Promise<void>;
   contacts: ContactWithBalance[];
   contactMap: Map<string, ContactWithBalance>;
@@ -2424,7 +2424,7 @@ interface ContactAddProps extends Omit<AddProps, "onAdd"> {
   onNewContact?: () => void;
 }
 
-function IncomeCard({
+export function IncomeCard({
   txs,
   onAdd,
   onUpdate,
@@ -2530,7 +2530,7 @@ function IncomeCard({
   );
 }
 
-interface ExpenseCategoryProps {
+export interface ExpenseCategoryProps {
   txs: Transaction[];
   onAdd: (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => void | Promise<void>;
   onUpdate: (id: string, patch: Partial<Transaction>) => void | Promise<void>;
@@ -2540,7 +2540,7 @@ interface ExpenseCategoryProps {
 /** Модуль невозвратных расходов по 5 фиксированным направлениям. Категория
  * «Зарплаты» вместо суммы открывает мини-модуль зарплат (см. PayrollPanel) —
  * там у каждого сотрудника своя ставка и день выплаты. */
-function ExpenseCategoryCard({ txs, onAdd, onUpdate, onDelete }: ExpenseCategoryProps) {
+export function ExpenseCategoryCard({ txs, onAdd, onUpdate, onDelete }: ExpenseCategoryProps) {
   const [category, setCategory] = useState<string>(EXPENSE_CATEGORIES[0].code);
   const [amount, setAmount] = useState("");
   const [otherNote, setOtherNote] = useState("");
@@ -2818,7 +2818,7 @@ function PayrollPanel({ onAdd }: { onAdd: ExpenseCategoryProps["onAdd"] }) {
 
 /** Выдача денег конкретному контакту (создаёт его долг) — отдельно от
  * невозвратных расходов по категориям, которые теперь в ExpenseCategoryCard. */
-function ExpensePersonCard({
+export function ExpensePersonCard({
   txs,
   onAdd,
   onUpdate,

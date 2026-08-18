@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, History, Lock, Pencil, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, History, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,16 @@ import {
 import { cn } from "@/lib/utils";
 import { fmt, txLabel, type Transaction } from "@/lib/cash-shared";
 import { useArchivedDays, useCashTransactions } from "@/lib/cash-register";
+import {
+  BuyCard,
+  ExpenseCategoryCard,
+  ExpensePersonCard,
+  IncomeCard,
+  OpeningCard,
+  SellCard,
+} from "@/routes/index";
+import { useContactsWithBalances } from "@/lib/contacts";
+import { CURRENCIES, type Currency } from "@/lib/cash-shared";
 import { supabase } from "@/integrations/supabase/client";
 import { useMoneySpendLog } from "@/lib/people-money-spend-log";
 import { formatDateKeyRu, useSessionDate } from "@/lib/session-date";
@@ -38,8 +48,8 @@ const EDIT_PIN = "0000";
  * меняется и как это сдвинет доход последующих дней. */
 interface PendingEdit {
   tx: Transaction;
-  kind: "update" | "delete";
-  patch?: { amount?: number; rate?: number; name?: string };
+  kind: "update" | "delete" | "insert";
+  patch?: Partial<Transaction>;
 }
 
 function ArchivePage() {
@@ -59,6 +69,59 @@ function ArchivePage() {
   const [busy, setBusy] = useState(false);
 
   const { data: dayTxs = [] } = useCashTransactions(openDate ?? undefined);
+  const { data: contacts = [] } = useContactsWithBalances();
+  const contactMap = useMemo(() => {
+    const m = new Map<string, (typeof contacts)[number]>();
+    for (const c of contacts) m.set(c.name.trim().toLowerCase(), c);
+    return m;
+  }, [contacts]);
+
+  const byKind = (kind: Transaction["kind"]) => dayTxs.filter((t) => t.kind === kind);
+
+  /** Остатки того дня — та же арифметика, что в кассе. */
+  const dayTotals = useMemo(() => {
+    const t: Record<Currency, number> = { KZT: 0, USD: 0, EUR: 0, RUB: 0, KGS: 0, CNY: 0, GOLD: 0 };
+    for (const tx of dayTxs) {
+      const r = tx.rate || 0;
+      if (tx.kind === "opening" || tx.kind === "income") t[tx.currency] += tx.amount;
+      else if (tx.kind === "expense") t[tx.currency] -= tx.amount;
+      else if (tx.kind === "buy") { t[tx.currency] += tx.amount; t.KZT -= tx.amount * r; }
+      else if (tx.kind === "sell") { t[tx.currency] -= tx.amount; t.KZT += tx.amount * r; }
+    }
+    return t;
+  }, [dayTxs]);
+
+  /** В архиве всё меняется только через подтверждение: модули кассы вызывают
+   * эти обработчики, а те не пишут сразу, а готовят предпросмотр. */
+  function guard(): boolean {
+    if (!editMode) {
+      setPinOpen(true);
+      return false;
+    }
+    return true;
+  }
+
+  async function addTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
+    if (!guard() || !openDate) return;
+    await stageEdit({
+      tx: { ...tx, id: tx.id ?? crypto.randomUUID(), ts: Date.parse(`${openDate}T12:00:00`) } as Transaction,
+      kind: "insert",
+    });
+  }
+
+  async function updateTx(id: string, patch: Partial<Transaction>) {
+    if (!guard()) return;
+    const tx = dayTxs.find((t) => t.id === id);
+    if (!tx) return;
+    await stageEdit({ tx, kind: "update", patch: patch as PendingEdit["patch"] });
+  }
+
+  async function deleteTx(id: string) {
+    if (!guard()) return;
+    const tx = dayTxs.find((t) => t.id === id);
+    if (!tx) return;
+    await stageEdit({ tx, kind: "delete" });
+  }
 
   // Архив — только закрытые смены: текущую правят на главной странице.
   const archivedDays = useMemo(
@@ -105,7 +168,19 @@ function ArchivePage() {
   }
 
   async function applyTxChange(edit: PendingEdit) {
-    if (edit.kind === "delete") {
+    if (edit.kind === "insert") {
+      await supabase.from("cash_transactions").insert({
+        id: edit.tx.id,
+        kind: edit.tx.kind,
+        currency: edit.tx.currency,
+        amount: edit.tx.amount,
+        rate: edit.tx.rate ?? null,
+        name: edit.tx.name ?? null,
+        expense_type: edit.tx.expenseType ?? null,
+        business_date: openDate,
+        ts: new Date(edit.tx.ts).toISOString(),
+      });
+    } else if (edit.kind === "delete") {
       await supabase.from("cash_transactions").delete().eq("id", edit.tx.id);
     } else if (edit.patch) {
       await supabase
@@ -120,7 +195,9 @@ function ArchivePage() {
   }
 
   async function revertTxChange(edit: PendingEdit) {
-    if (edit.kind === "delete") {
+    if (edit.kind === "insert") {
+      await supabase.from("cash_transactions").delete().eq("id", edit.tx.id);
+    } else if (edit.kind === "delete") {
       await supabase.from("cash_transactions").insert({
         id: edit.tx.id,
         kind: edit.tx.kind,
@@ -157,7 +234,9 @@ function ArchivePage() {
         summary:
           pending.kind === "delete"
             ? `Удалена операция: ${txLabel(pending.tx)}`
-            : `Изменена операция: ${txLabel(pending.tx)}`,
+            : pending.kind === "insert"
+              ? `Добавлена операция: ${txLabel(pending.tx)}`
+              : `Изменена операция: ${txLabel(pending.tx)}`,
         before: pending.tx,
         after: pending.kind === "delete" ? null : { ...pending.tx, ...pending.patch },
       });
@@ -242,33 +321,56 @@ function ArchivePage() {
                   )}
                 </div>
               </CardHeader>
-              <CardContent className="p-0">
-                <ul className="divide-y divide-border">
-                  {dayTxs.map((tx) => (
-                    <li key={tx.id} className="flex items-center justify-between gap-2 px-4 py-2 text-sm">
-                      <span className="truncate">{txLabel(tx)}</span>
-                      {editMode && (
-                        <span className="flex shrink-0 gap-1">
-                          <EditTxButton tx={tx} onStage={stageEdit} disabled={busy} />
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7 text-danger"
-                            disabled={busy}
-                            onClick={() => stageEdit({ tx, kind: "delete" })}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </span>
-                      )}
-                    </li>
+              <CardContent className="p-3">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                  {CURRENCIES.filter((c) => dayTotals[c.code] !== 0).map((c) => (
+                    <div key={c.code} className="rounded-md border border-border p-2 text-center">
+                      <div className="text-xs text-muted-foreground">{c.short}</div>
+                      <div className={cn(
+                        "text-sm font-bold tabular-nums",
+                        dayTotals[c.code] < 0 && "text-danger",
+                      )}>
+                        {fmt(dayTotals[c.code])}
+                      </div>
+                    </div>
                   ))}
-                  {dayTxs.length === 0 && (
-                    <li className="p-4 text-sm text-muted-foreground">Операций нет</li>
-                  )}
-                </ul>
+                </div>
               </CardContent>
             </Card>
+
+            {/* Та же раскладка, что на главной: остаток во всю ширину, ниже
+                покупка и продажа, приход и выдача, расходы по категориям. */}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="lg:col-span-2">
+                <OpeningCard txs={byKind("opening")} onAdd={addTx} onUpdate={updateTx} onDelete={deleteTx} />
+              </div>
+              <BuyCard txs={byKind("buy")} onAdd={addTx} onUpdate={updateTx} onDelete={deleteTx} />
+              <SellCard txs={byKind("sell")} onAdd={addTx} onUpdate={updateTx} onDelete={deleteTx} />
+              <IncomeCard
+                txs={byKind("income")}
+                onAdd={addTx}
+                onUpdate={updateTx}
+                onDelete={deleteTx}
+                contacts={contacts}
+                contactMap={contactMap}
+              />
+              <ExpensePersonCard
+                txs={dayTxs.filter((t) => t.kind === "expense" && t.expenseType === "person")}
+                onAdd={addTx}
+                onUpdate={updateTx}
+                onDelete={deleteTx}
+                contacts={contacts}
+                contactMap={contactMap}
+              />
+              <div className="lg:col-span-2">
+                <ExpenseCategoryCard
+                  txs={dayTxs.filter((t) => t.kind === "expense" && t.expenseType !== "person")}
+                  onAdd={addTx}
+                  onUpdate={updateTx}
+                  onDelete={deleteTx}
+                />
+              </div>
+            </div>
           </>
         )}
       </main>
@@ -308,71 +410,6 @@ function ArchivePage() {
   );
 }
 
-function EditTxButton({
-  tx,
-  onStage,
-  disabled,
-}: {
-  tx: Transaction;
-  onStage: (e: PendingEdit) => void;
-  disabled: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState(String(tx.amount));
-  const [rate, setRate] = useState(tx.rate ? String(tx.rate) : "");
-  const [name, setName] = useState(tx.name ?? "");
-
-  return (
-    <>
-      <Button size="icon" variant="ghost" className="h-7 w-7" disabled={disabled} onClick={() => setOpen(true)}>
-        <Pencil className="h-3.5 w-3.5" />
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Изменить операцию</DialogTitle>
-            <DialogDescription>{txLabel(tx)}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <div>
-              <label className="text-xs text-muted-foreground">Сумма</label>
-              <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
-            </div>
-            {(tx.kind === "buy" || tx.kind === "sell") && (
-              <div>
-                <label className="text-xs text-muted-foreground">Курс</label>
-                <Input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" />
-              </div>
-            )}
-            <div>
-              <label className="text-xs text-muted-foreground">Имя / примечание</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setOpen(false);
-                onStage({
-                  tx,
-                  kind: "update",
-                  patch: {
-                    amount: Number(amount.replace(/\s/g, "")) || tx.amount,
-                    rate: rate ? Number(rate) : undefined,
-                    name,
-                  },
-                });
-              }}
-            >
-              Проверить изменение
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
 /** Шаг подтверждения: сама операция «было → станет» и то, как сдвинется доход
  * каждой затронутой смены. Без него правка прошлого дня меняла бы цифры
  * нескольких смен вслепую. */
@@ -403,14 +440,18 @@ function ConfirmEditDialog({
           <DialogDescription>
             {pending.kind === "delete"
               ? "Операция будет удалена из закрытой смены."
-              : "Операция в закрытой смене будет изменена."}
+              : pending.kind === "insert"
+                ? "В закрытую смену будет добавлена операция."
+                : "Операция в закрытой смене будет изменена."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2 rounded-md border border-border p-3 text-sm">
           <div className="flex justify-between gap-3">
             <span className="text-muted-foreground">Было</span>
-            <span className="text-right">{txLabel(pending.tx)}</span>
+            <span className="text-right">
+              {pending.kind === "insert" ? "— операции не было —" : txLabel(pending.tx)}
+            </span>
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-muted-foreground">Станет</span>
