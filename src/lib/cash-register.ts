@@ -197,6 +197,15 @@ export function useAddCashTransaction() {
         salynghanAmount = alloc.salynghanAmount;
         if (alloc.warning) allocNote = ` · ${alloc.warning}`;
       }
+      // Дату смены проставляем сразу при вводе, а не только при «Новый день».
+      // Иначе операции лежат без даты, и если день забыть закрыть, два рабочих
+      // дня слипаются в один — ровно та беда, из-за которой пришлось потом
+      // разбирать 12 и 13 августа.
+      const { data: st } = await supabase
+        .from("session_state")
+        .select("business_date")
+        .eq("id", true)
+        .maybeSingle();
       const { error } = await supabase.from("cash_transactions").insert({
         id: tx.id,
         kind: tx.kind,
@@ -207,6 +216,7 @@ export function useAddCashTransaction() {
         expense_type: tx.expenseType ?? null,
         contact_tx_id: tx.contactTxId ?? null,
         ts: occurredAt,
+        business_date: st?.business_date ?? null,
         karyz_amount: karyzAmount,
         salynghan_amount: salynghanAmount,
       });

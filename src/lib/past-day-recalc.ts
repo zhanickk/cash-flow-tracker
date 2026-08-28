@@ -34,8 +34,17 @@ export interface DayIncome {
   carryOut: CarryIn[];
 }
 
+/** Правка, которую надо учесть в прогнозе, НЕ записывая её в базу. */
+export type PendingPatch =
+  | { kind: "insert"; tx: Transaction; businessDate: string }
+  | { kind: "update"; id: string; patch: Partial<Transaction> }
+  | { kind: "delete"; id: string };
+
 /** Операции всех смен начиная с указанной даты, сгруппированные по дате. */
-async function loadDaysFrom(fromDate: string): Promise<Map<string, Transaction[]>> {
+async function loadDaysFrom(
+  fromDate: string,
+  patch?: PendingPatch,
+): Promise<Map<string, Transaction[]>> {
   // Постранично: пересчёт может захватить много дней сразу, а PostgREST
   // отдаёт максимум 1000 строк за запрос.
   const data = await fetchAllRows<CashTxRow>((from, to) =>
@@ -52,8 +61,19 @@ async function loadDaysFrom(fromDate: string): Promise<Map<string, Transaction[]
     const date = row.business_date;
     if (!date) continue;
     const list = byDate.get(date) ?? [];
-    list.push(rowToTx(row));
+    let tx = rowToTx(row);
+    // Правку применяем в памяти. Раньше ради прогноза её записывали в базу и
+    // тут же откатывали — если связь обрывалась между этими шагами, изменение
+    // оставалось в базе неподтверждённым и без пересчёта цепочки.
+    if (patch?.kind === "delete" && patch.id === tx.id) continue;
+    if (patch?.kind === "update" && patch.id === tx.id) tx = { ...tx, ...patch.patch };
+    list.push(tx);
     byDate.set(date, list);
+  }
+  if (patch?.kind === "insert") {
+    const list = byDate.get(patch.businessDate) ?? [];
+    list.push(patch.tx);
+    byDate.set(patch.businessDate, list);
   }
   return byDate;
 }
@@ -93,8 +113,11 @@ export async function carryInBefore(date: string): Promise<CarryIn[]> {
  * Считает, как изменится цепочка, НЕ записывая ничего. Нужно для окна
  * подтверждения: показать «было → станет» до того, как пользователь согласится.
  */
-export async function previewChain(fromDate: string): Promise<DayIncome[]> {
-  const byDate = await loadDaysFrom(fromDate);
+export async function previewChain(
+  fromDate: string,
+  patch?: PendingPatch,
+): Promise<DayIncome[]> {
+  const byDate = await loadDaysFrom(fromDate, patch);
   const dates = [...byDate.keys()].sort();
   let carry = await carryInBefore(fromDate);
 

@@ -35,6 +35,7 @@ import {
   logPastDayEdit,
   previewChain,
   type DayIncome,
+  type PendingPatch,
 } from "@/lib/past-day-recalc";
 import {
   buildDailyReport,
@@ -225,16 +226,21 @@ function ArchivePage() {
     setBusy(true);
     try {
       const before = await currentChain(openDate);
-      // Считаем «как станет» на копии: временно применяем правку, снимаем
-      // прогноз и сразу откатываем — записываем только после подтверждения.
-      await applyTxChange(edit);
-      const after = await previewChain(openDate);
-      await revertTxChange(edit);
+      // Прогноз считается в памяти, база не трогается вообще — до нажатия
+      // «Да, изменить» в ней ничего не меняется.
+      const after = await previewChain(openDate, toPendingPatch(edit, openDate));
       setPending(edit);
       setPreview({ before, after });
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Правка в виде, понятном прогнозу цепочки. */
+  function toPendingPatch(edit: PendingEdit, date: string): PendingPatch {
+    if (edit.kind === "insert") return { kind: "insert", tx: edit.tx, businessDate: date };
+    if (edit.kind === "delete") return { kind: "delete", id: edit.tx.id };
+    return { kind: "update", id: edit.tx.id, patch: edit.patch ?? {} };
   }
 
   async function applyTxChange(edit: PendingEdit) {
@@ -264,32 +270,6 @@ function ArchivePage() {
     }
   }
 
-  async function revertTxChange(edit: PendingEdit) {
-    if (edit.kind === "insert") {
-      await supabase.from("cash_transactions").delete().eq("id", edit.tx.id);
-    } else if (edit.kind === "delete") {
-      await supabase.from("cash_transactions").insert({
-        id: edit.tx.id,
-        kind: edit.tx.kind,
-        currency: edit.tx.currency,
-        amount: edit.tx.amount,
-        rate: edit.tx.rate ?? null,
-        name: edit.tx.name ?? null,
-        expense_type: edit.tx.expenseType ?? null,
-        business_date: openDate,
-        ts: new Date(edit.tx.ts).toISOString(),
-      });
-    } else {
-      await supabase
-        .from("cash_transactions")
-        .update({
-          amount: edit.tx.amount,
-          rate: edit.tx.rate ?? null,
-          name: edit.tx.name ?? null,
-        })
-        .eq("id", edit.tx.id);
-    }
-  }
 
   async function confirmEdit() {
     if (!pending || !openDate || !preview) return;
