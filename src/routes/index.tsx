@@ -42,7 +42,6 @@ import {
   Pencil,
   Trash2,
   History,
-  RotateCcw,
   Check,
   X,
   Plus,
@@ -139,7 +138,6 @@ import {
   useAddCashTransaction,
   useUpdateCashTransaction,
   useDeleteCashTransaction,
-  useResetCashRegister,
   useNewDayCashRegister,
 } from "@/lib/cash-register";
 
@@ -292,13 +290,9 @@ function Index() {
   const addCashTx = useAddCashTransaction();
   const updateCashTx = useUpdateCashTransaction();
   const deleteCashTx = useDeleteCashTransaction();
-  const resetCashRegister = useResetCashRegister();
   const newDayCashRegister = useNewDayCashRegister();
 
   const [showHistory, setShowHistory] = useState(false);
-  const [resetOpen, setResetOpen] = useState(false);
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState("");
   const [reportOpen, setReportOpen] = useState(false);
   const [reportData, setReportData] = useState<DailyReportData | null>(null);
   const [reportExcel, setReportExcel] = useState<ArrayBuffer | null>(null);
@@ -698,17 +692,6 @@ function Index() {
     setNewDayPinError("");
   }
 
-  function tryReset() {
-    if (pin !== RESET_PIN) {
-      setPinError("Неверный PIN");
-      return;
-    }
-    resetCashRegister.mutate();
-    setResetOpen(false);
-    setPin("");
-    setPinError("");
-  }
-
   return (
     <div className="min-h-screen bg-background pb-24">
       {/* SECTION 1 — Sticky summary bar */}
@@ -915,19 +898,6 @@ function Index() {
           >
             <Sunrise className="h-5 w-5" />
             Новый день
-          </Button>
-          <Button
-            variant="destructive"
-            size="lg"
-            className="gap-2"
-            onClick={() => {
-              setPin("");
-              setPinError("");
-              setResetOpen(true);
-            }}
-          >
-            <RotateCcw className="h-5 w-5" />
-            Перезапустить кассу
           </Button>
         </div>
         <div className="grid gap-2 lg:col-span-2 sm:grid-cols-2">
@@ -1182,39 +1152,6 @@ function Index() {
       </Dialog>
 
       {/* Reset PIN dialog */}
-      <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Подтверждение перезапуска</DialogTitle>
-            <DialogDescription>
-              Введите 4-значный PIN для очистки кассы. Журнал изменений будет сохранён.
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            type="password"
-            inputMode="numeric"
-            maxLength={4}
-            placeholder="••••"
-            value={pin}
-            onChange={(e) => {
-              setPin(e.target.value.replace(/\D/g, "").slice(0, 4));
-              setPinError("");
-            }}
-            onKeyDown={(e) => handleEnterKey(e, undefined, tryReset)}
-            className="text-center text-2xl tracking-[0.5em]"
-            autoFocus
-          />
-          {pinError && <div className="text-sm text-danger">{pinError}</div>}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setResetOpen(false)}>
-              Отмена
-            </Button>
-            <Button variant="destructive" onClick={tryReset}>
-              Перезапустить
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
