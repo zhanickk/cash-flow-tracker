@@ -238,6 +238,12 @@ function onCurrencyChange(
 const REPORT_DONE_KEY = "cash-register-report-done-v1";
 const RESET_PIN = "0000";
 
+/** Раньше этого часа смену не закрывают: «Новый день» стирает рабочий день
+ * безвозвратно, а нажатый по ошибке утром он обнуляет ещё не начавшуюся
+ * смену. Ограничение снимается, если рабочая дата смены уже в прошлом —
+ * тогда день просто забыли закрыть вовремя, и держать его дальше вредно. */
+const NEW_DAY_HOUR = 18;
+
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
@@ -287,6 +293,13 @@ function Index() {
     [storedSessionDate, sessionFromTs],
   );
   const sessionDateLabel = useMemo(() => formatDateKeyRu(sessionDateKey), [sessionDateKey]);
+  // Закрывать смену можно после NEW_DAY_HOUR либо когда её дата уже прошла
+  // (день забыли закрыть — тогда ждать вечера незачем).
+  const newDayTimeAllowed = useMemo(() => {
+    const now = new Date();
+    if (now.getHours() >= NEW_DAY_HOUR) return true;
+    return sessionDateKey < toDateKey(now);
+  }, [sessionDateKey]);
 
   const addCashTx = useAddCashTransaction();
   const updateCashTx = useUpdateCashTransaction();
@@ -574,7 +587,9 @@ function Index() {
       setReportData(data);
       setReportExcel(buffer);
       setReportOpen(true);
-      markReportDone();
+      // Отметку «отчёт за смену сделан» ставим не здесь, а после реального
+      // скачивания файла: открыть окно и закрыть его — не то же самое, что
+      // сохранить отчёт, а «Новый день» стирает рабочий день безвозвратно.
     } finally {
       setReportBusy(false);
     }
@@ -586,6 +601,7 @@ function Index() {
     try {
       await saveExcelToDirectory(reportExcel, reportData.fileBaseName);
       downloadExcelBuffer(reportExcel, reportData.fileBaseName);
+      markReportDone();
     } finally {
       setReportBusy(false);
     }
@@ -639,7 +655,13 @@ function Index() {
 
   function tryNewDay() {
     if (!reportDoneToday) {
-      setNewDayPinError("Сначала сформируйте дневной отчёт за сегодня");
+      setNewDayPinError("Сначала скачайте дневной отчёт за смену");
+      return;
+    }
+    if (!newDayTimeAllowed) {
+      setNewDayPinError(
+        `Смену закрывают после ${NEW_DAY_HOUR}:00. Сейчас ${new Date().getHours()}:${String(new Date().getMinutes()).padStart(2, "0")}`,
+      );
       return;
     }
     if (newDayPin !== RESET_PIN) {
@@ -676,21 +698,30 @@ function Index() {
     // неперекрытый остаток уезжает в следующую смену обычной операцией.
     const simple = computeSimpleIncome(txsToFxOps(transactions), carryIn);
     const openedDate = newDayDate || nextDateKey(sessionDateKey);
-    newDayCashRegister.mutate({
-      openings,
-      excessBuys,
-      spendLog,
-      sessionStart: sessionFromTs,
-      simpleRows: Object.values(simple),
-      carryOut: carryOutFrom(simple),
-      closingBusinessDate: sessionDateKey,
-      openingBusinessDate: openedDate,
-    });
-    localStorage.removeItem(REPORT_DONE_KEY);
-    setReportDoneToday(false);
-    setNewDayOpen(false);
-    setNewDayPin("");
-    setNewDayPinError("");
+    newDayCashRegister.mutate(
+      {
+        openings,
+        excessBuys,
+        spendLog,
+        sessionStart: sessionFromTs,
+        simpleRows: Object.values(simple),
+        carryOut: carryOutFrom(simple),
+        closingBusinessDate: sessionDateKey,
+        openingBusinessDate: openedDate,
+      },
+      {
+        onSuccess: () => {
+          localStorage.removeItem(REPORT_DONE_KEY);
+          setReportDoneToday(false);
+          setNewDayOpen(false);
+          setNewDayPin("");
+          setNewDayPinError("");
+        },
+        // Ошибку показываем в окне, а не глотаем: закрытие дня — необратимое
+        // действие, и «вроде нажал, а ничего не произошло» здесь опаснее всего.
+        onError: (e) => setNewDayPinError(e instanceof Error ? e.message : "Не удалось закрыть смену"),
+      },
+    );
   }
 
   return (
@@ -889,11 +920,13 @@ function Index() {
             size="lg"
             variant="secondary"
             className="gap-2"
-            disabled={!reportDoneToday}
+            disabled={!reportDoneToday || !newDayTimeAllowed}
             title={
-              reportDoneToday
-                ? "Перенести остатки на новый день"
-                : "Сначала сформируйте дневной отчёт"
+              !reportDoneToday
+                ? "Сначала скачайте дневной отчёт за смену"
+                : !newDayTimeAllowed
+                  ? `Смену закрывают после ${NEW_DAY_HOUR}:00`
+                  : "Перенести остатки на новый день"
             }
             onClick={openNewDayDialog}
           >
@@ -965,9 +998,14 @@ function Index() {
             {summaryBusy ? "Формируем…" : "Скачать сводку (контакты + касса)"}
           </Button>
         </div>
+        {!newDayTimeAllowed && reportDoneToday && (
+          <p className="text-center text-xs text-muted-foreground lg:col-span-2">
+            «Новый день» откроется после {NEW_DAY_HOUR}:00
+          </p>
+        )}
         {!reportDoneToday && transactions.length > 0 && (
           <p className="text-center text-xs text-muted-foreground lg:col-span-2">
-            «Новый день» доступен после формирования дневного отчёта
+            «Новый день» откроется после того, как скачаете дневной отчёт
           </p>
         )}
       </main>
