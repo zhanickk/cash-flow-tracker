@@ -162,10 +162,15 @@ function CurrencyAccountsPage() {
   const [excelImportOpen, setExcelImportOpen] = useState(false);
 
   const searched = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const all = contacts ?? [];
+    const q = query.trim();
+    // Пустой запрос — показываем весь справочник. Поиск возвращает на пустую
+    // строку ничего, потому что подсказке в кассе нельзя вываливать все
+    // контакты разом; здесь же это означало пустую страницу счетов.
+    if (!q) return all;
     // Тот же порядок, что в подсказке кассы: сначала по началу имени, потом по
     // началу любого слова, потом по вхождению.
-    return searchContactsByName(contacts ?? [], q, Number.MAX_SAFE_INTEGER);
+    return searchContactsByName(all, q, Number.MAX_SAFE_INTEGER);
   }, [contacts, query]);
 
   const usdSalynghan = useMemo(() => sortByCurrencyAmount(searched, "USD", "positive"), [searched]);
