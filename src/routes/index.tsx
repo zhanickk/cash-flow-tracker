@@ -329,6 +329,11 @@ function Index() {
   const [newDayDate, setNewDayDate] = useState("");
   // Контакт, которого не оказалось в справочнике при вводе операции.
   const [missingContactName, setMissingContactName] = useState<string | null>(null);
+  // Сделка, похожая на заведённый руками перенос: ждёт подтверждения.
+  const [carryWarn, setCarryWarn] = useState<{
+    tx: Omit<Transaction, "id" | "ts"> & { id?: string };
+    carry: { currency: string; amount: number; rate: number };
+  } | null>(null);
   const [newContactOpen, setNewContactOpen] = useState(false);
   const [newContactName, setNewContactName] = useState("");
   const [newContactError, setNewContactError] = useState("");
@@ -391,6 +396,15 @@ function Index() {
   }, [transactions]);
 
   function addTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
+    const look = carryLookalike(tx);
+    if (look) {
+      setCarryWarn({ tx, carry: look });
+      return;
+    }
+    saveTx(tx);
+  }
+
+  function saveTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
     const full: Transaction = { ...tx, id: tx.id ?? crypto.randomUUID(), ts: Date.now() };
     addCashTx.mutate(full);
   }
@@ -402,6 +416,23 @@ function Index() {
     const id = await findContactByName(name);
     if (!id) throw new ContactNotFoundError(name);
     return id;
+  }
+
+  /**
+   * Сделка совпала с переносом остатка по сумме и курсу — почти наверняка его
+   * завели руками, как в бумажной таблице. Программа подставляет перенос сама,
+   * поэтому получается задвоение: так 82 000 юаней превратились в 314 000 на
+   * руках и занизили доход. Спрашиваем до записи.
+   */
+  function carryLookalike(tx: { kind: string; currency: string; amount: number; rate?: number }) {
+    if (tx.kind !== "buy" && tx.kind !== "sell") return null;
+    const c = carryIn.find((x) => x.currency === tx.currency);
+    if (!c || !c.rate || !tx.rate) return null;
+    const sameSide = c.amount > 0 ? tx.kind === "buy" : tx.kind === "sell";
+    if (!sameSide) return null;
+    const sameAmount = Math.abs(Math.abs(c.amount) - tx.amount) < 0.01;
+    const sameRate = Math.abs(c.rate - tx.rate) / c.rate < 0.0001;
+    return sameAmount && sameRate ? c : null;
   }
 
   async function addContactLinkedTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
@@ -1066,6 +1097,51 @@ function Index() {
               ))}
             </ul>
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* Сделка совпала с переносом — вероятно, его завели руками */}
+      <Dialog open={carryWarn !== null} onOpenChange={(o) => !o && setCarryWarn(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Похоже на перенос остатка</DialogTitle>
+            <DialogDescription>
+              Эта операция совпадает с остатком, перенесённым с прошлой смены, по сумме и по
+              курсу. Программа подставляет перенос сама — он уже посчитан в остатке на начало
+              дня. Если завести его ещё и руками, валюта задвоится, а доход занизится.
+            </DialogDescription>
+          </DialogHeader>
+          {carryWarn && (
+            <div className="space-y-1 rounded-md border border-border p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Перенос с прошлой смены</span>
+                <span className="tabular-nums">
+                  {fmt(Math.abs(carryWarn.carry.amount))} {carryWarn.carry.currency} ×{" "}
+                  {fmt(carryWarn.carry.rate, 4)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Вы вводите</span>
+                <span className="tabular-nums font-medium">
+                  {fmt(carryWarn.tx.amount)} {carryWarn.tx.currency} ×{" "}
+                  {fmt(carryWarn.tx.rate ?? 0, 4)}
+                </span>
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCarryWarn(null)}>
+              Отменить — это перенос
+            </Button>
+            <Button
+              onClick={() => {
+                if (carryWarn) saveTx(carryWarn.tx);
+                setCarryWarn(null);
+              }}
+            >
+              Нет, это отдельная сделка
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
