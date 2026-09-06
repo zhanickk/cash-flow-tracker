@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import type { Tables } from "@/integrations/supabase/types";
 import { insertHistory } from "@/lib/cash-register";
-import { nameKey } from "@/lib/contacts-excel-import";
+import { nameKey, nameWordKey } from "@/lib/contacts-excel-import";
 import type { Currency } from "@/lib/cash-shared";
 import {
   computeBalancesFromAmounts,
@@ -336,7 +336,14 @@ export function useImportContactBalancesFromExcel() {
       targets: ExcelBalanceTarget[];
       /** Удалить контакты, которых нет в Excel (иначе — только обнулить балансы). */
       deleteMissing?: boolean;
-    }): Promise<{ reconciled: number; created: number; removed: number }> => {
+    }): Promise<{
+      reconciled: number;
+      created: number;
+      /** Имена контактов, заведённых импортом впервые — показываем их отдельно,
+       * чтобы дубль было видно сразу. */
+      createdNames: string[];
+      removed: number;
+    }> => {
       const [{ data: contacts, error: cErr }, allTxs] = await Promise.all([
         supabase.from("contacts").select("*"),
         fetchAllRows<ContactTransaction>((from, to) =>
@@ -405,9 +412,28 @@ export function useImportContactBalancesFromExcel() {
 
       let created = 0;
 
+      // Дополнительный индекс по набору слов — чтобы перестановка имени не
+      // считалась новым человеком.
+      const contactByWordKey = new Map<string, Contact>();
+      for (const c of contactList) {
+        const wk = nameWordKey(c.name);
+        if (!contactByWordKey.has(wk)) contactByWordKey.set(wk, c);
+      }
+      /** Контакты, которых импорт завёл впервые, — их показываем отдельно,
+       * чтобы дубль было видно сразу, а не через неделю по расхождению. */
+      const createdNames: string[] = [];
+
       for (const target of targetsByPersonCurrency.values()) {
         const key = nameKey(target.normalizedName);
         let contact = contactByKey.get(key);
+        if (!contact) {
+          // Пробуем найти того же человека с переставленными словами.
+          const byWords = contactByWordKey.get(nameWordKey(target.normalizedName));
+          if (byWords) {
+            contact = byWords;
+            contactByKey.set(key, contact);
+          }
+        }
         if (!contact) {
           const { data: newContact, error: createErr } = await supabase
             .from("contacts")
@@ -419,6 +445,8 @@ export function useImportContactBalancesFromExcel() {
           contactByKey.set(key, contact);
           contactList.push(contact);
           txsByContact.set(contact.id, []);
+          contactByWordKey.set(nameWordKey(contact.name), contact);
+          createdNames.push(contact.name);
           created++;
         }
 
@@ -525,6 +553,7 @@ export function useImportContactBalancesFromExcel() {
       return {
         reconciled: inserts.length,
         created,
+        createdNames,
         removed: input.deleteMissing ? removed : zeroedContacts,
       };
     },

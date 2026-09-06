@@ -132,8 +132,15 @@ export function ContactsExcelImportDialog({
       {
         onSuccess: (data) => {
           setConfirmOpen(false);
+          // Имена новых контактов показываем списком: чаще всего это не новый
+          // человек, а тот же под другим написанием — так дубль виден сразу,
+          // а не всплывает через неделю расхождением в сверке.
+          const created =
+            data.createdNames.length > 0
+              ? ` Новые контакты (проверьте, нет ли среди них уже заведённых под другим написанием): ${data.createdNames.join(", ")}.`
+              : "";
           setResultMsg(
-            `Готово: ${data.reconciled} корректировок, создано ${data.created}, обнулено ${data.removed} контактов.`,
+            `Готово: ${data.reconciled} корректировок, создано ${data.created}, обнулено ${data.removed} контактов.${created}`,
           );
           setRows(null);
         },

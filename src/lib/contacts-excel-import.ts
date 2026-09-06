@@ -28,6 +28,16 @@ export function nameKey(name: string): string {
   return normalizeContactName(name).toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Ключ, не зависящий от порядка слов: «Жаркент Илияс» и «илияс жаркент» дают
+ * одинаковый. Импорт искал контакт слово-в-слово, поэтому на перестановке имени
+ * заводил нового человека и обнулял старого — так один Илияс жаркентский
+ * разъехался на три записи с деньгами на каждой.
+ */
+export function nameWordKey(name: string): string {
+  return nameKey(name).split(" ").filter(Boolean).sort().join(" ");
+}
+
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && isFinite(v) && v !== 0;
 }
