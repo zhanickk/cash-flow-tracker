@@ -89,6 +89,7 @@ import { computeSessionExcessByCurrency, txsToFxOps } from "@/lib/fx-people-mone
 import { carryOutFrom, computeSimpleIncome, totalSimpleIncome } from "@/lib/simple-income";
 import { useSessionCarryIn } from "@/lib/session-carry-in";
 import { useCurrencyCostBasis } from "@/lib/currency-cost-basis";
+import { searchContactsByName } from "@/lib/contact-search";
 import {
   dateKeyToDate,
   formatDateKeyRu,
@@ -2266,10 +2267,7 @@ function ContactNameAutocomplete({
   const suggestions = useMemo(() => {
     const q = name.trim().toLowerCase();
     if (!q || freeMode) return [];
-    const starts = contacts.filter((c) => c.name.toLowerCase().startsWith(q));
-    const list =
-      starts.length > 0 ? starts : contacts.filter((c) => c.name.toLowerCase().includes(q));
-    return list.slice(0, 6);
+    return searchContactsByName(contacts, q);
   }, [contacts, name, freeMode]);
 
   return (

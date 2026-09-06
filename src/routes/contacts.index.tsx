@@ -27,6 +27,7 @@ import {
   useCreateContact,
   type ContactWithBalance,
 } from "@/lib/contacts";
+import { searchContactsByName } from "@/lib/contact-search";
 import { balanceTone, fmtContactBalance, type ContactCurrency } from "@/lib/contact-currencies";
 
 export const Route = createFileRoute("/contacts/")({
@@ -162,7 +163,9 @@ function CurrencyAccountsPage() {
 
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (contacts ?? []).filter((c) => c.name.toLowerCase().includes(q));
+    // Тот же порядок, что в подсказке кассы: сначала по началу имени, потом по
+    // началу любого слова, потом по вхождению.
+    return searchContactsByName(contacts ?? [], q, Number.MAX_SAFE_INTEGER);
   }, [contacts, query]);
 
   const usdSalynghan = useMemo(() => sortByCurrencyAmount(searched, "USD", "positive"), [searched]);

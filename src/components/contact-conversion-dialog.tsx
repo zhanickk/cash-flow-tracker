@@ -20,6 +20,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowLeftRight, ArrowRight } from "lucide-react";
 import { useAddContactConversion, type ContactWithBalance } from "@/lib/contacts";
+import { searchContactsByName } from "@/lib/contact-search";
 import { formatAmountInput, parseAmountInput } from "@/lib/cash-shared";
 
 function fmtSide(currency: "KZT" | "USD", n: number) {
@@ -58,7 +59,7 @@ export function ContactConversionDialog({
     if (!contacts || fixedContact) return [];
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return contacts.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 6);
+    return searchContactsByName(contacts, q);
   }, [contacts, query, fixedContact]);
 
   const amountNum = parseAmountInput(amount);
