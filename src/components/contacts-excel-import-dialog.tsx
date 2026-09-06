@@ -24,6 +24,7 @@ import {
   mergeKztTargets,
   mergeUsdTargets,
   nameKey,
+  nameWordKey,
   parseContactsExcel,
   type ParsedBalanceRow,
 } from "@/lib/contacts-excel-import";
@@ -106,12 +107,29 @@ export function ContactsExcelImportDialog({
   const usdNamesOnSheet = new Set(
     (rows ?? []).filter((r) => r.currency === "USD").map((r) => nameKey(r.normalizedName)),
   );
-  const removedContacts = contacts.filter((c) => {
-    const key = nameKey(c.name);
-    const missingKzt = !kztNamesOnSheet.has(key) && Math.abs(c.balances.KZT ?? 0) > 0.0001;
-    const missingUsd = !usdNamesOnSheet.has(key) && Math.abs(c.balances.USD ?? 0) > 0.0001;
-    return missingKzt || missingUsd;
-  });
+  // Совпадение ищем и по набору слов — так же, как сам импорт. Иначе контакт,
+  // который импорт найдёт по перестановке имени, попал бы сюда как «обнулится»
+  // и зря напугал.
+  const kztWordKeysOnSheet = new Set(
+    (rows ?? []).filter((r) => r.currency === "KZT").map((r) => nameWordKey(r.normalizedName)),
+  );
+  const usdWordKeysOnSheet = new Set(
+    (rows ?? []).filter((r) => r.currency === "USD").map((r) => nameWordKey(r.normalizedName)),
+  );
+  /** Балансы, которые импорт обнулит: контакта нет на листе, а деньги на нём
+   * есть. Показываем с суммами — молчаливое обнуление уже стоило долга
+   * клиента на 35 000 $, который заметили только при ручной сверке. */
+  const removedContacts = contacts
+    .map((c) => {
+      const key = nameKey(c.name);
+      const wkey = nameWordKey(c.name);
+      const onSheetKzt = kztNamesOnSheet.has(key) || kztWordKeysOnSheet.has(wkey);
+      const onSheetUsd = usdNamesOnSheet.has(key) || usdWordKeysOnSheet.has(wkey);
+      const kzt = !onSheetKzt && Math.abs(c.balances.KZT ?? 0) > 0.0001 ? (c.balances.KZT ?? 0) : 0;
+      const usd = !onSheetUsd && Math.abs(c.balances.USD ?? 0) > 0.0001 ? (c.balances.USD ?? 0) : 0;
+      return { contact: c, kzt, usd };
+    })
+    .filter((r) => r.kzt !== 0 || r.usd !== 0);
   const newRows = (rows ?? []).filter((r) => r.isNew);
   const usdRows = (rows ?? []).filter((r) => r.currency === "USD");
   const kztRows = (rows ?? []).filter((r) => r.currency === "KZT");
@@ -244,19 +262,27 @@ export function ContactsExcelImportDialog({
                   </ul>
                 </div>
                 {removedContacts.length > 0 && (
-                  <div className="rounded-md border border-accent bg-accent/40 p-2 text-xs">
-                    <div className="mb-1 flex items-center gap-1 font-medium text-accent-foreground">
+                  <div className="rounded-md border border-danger bg-danger-soft p-2 text-xs">
+                    <div className="mb-1 flex items-center gap-1 font-medium text-danger">
                       <Trash2 className="h-3.5 w-3.5" />
-                      Счета будут обнулены, контакты останутся ({removedContacts.length}):
+                      Эти счета обнулятся — их нет на листе ({removedContacts.length}):
                     </div>
-                    <div className="max-h-28 overflow-y-auto">
-                      <div className="flex flex-wrap gap-1">
-                        {removedContacts.map((c) => (
-                          <span key={c.id} className="rounded bg-card px-1.5 py-0.5">
-                            {c.name}
-                          </span>
+                    <div className="max-h-40 overflow-y-auto">
+                      <ul className="space-y-0.5">
+                        {removedContacts.map((r) => (
+                          <li key={r.contact.id} className="flex justify-between gap-2 rounded bg-card px-1.5 py-0.5">
+                            <span className="truncate">{r.contact.name}</span>
+                            <span className="shrink-0 tabular-nums font-medium text-danger">
+                              {r.usd !== 0 && fmtContactBalancePlain("USD", r.usd)}
+                              {r.usd !== 0 && r.kzt !== 0 && " · "}
+                              {r.kzt !== 0 && fmtContactBalancePlain("KZT", r.kzt)}
+                            </span>
+                          </li>
                         ))}
-                      </div>
+                      </ul>
+                    </div>
+                    <div className="mt-1 text-danger">
+                      Проверьте: если человек просто не попал на лист, его долг исчезнет.
                     </div>
                   </div>
                 )}
