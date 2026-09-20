@@ -685,6 +685,11 @@ function Index() {
   }
 
   function tryNewDay() {
+    // Закрытие уже идёт — второе нажатие игнорируем. 16 сентября «Новый день»
+    // нажали пять раз за шесть секунд: каждое нажатие записало свой комплект
+    // остатков, часть из них утроилась, всё это пришлось удалять руками, а
+    // потом вбивать заново — и доллар вбили на 10 044 меньше.
+    if (newDayCashRegister.isPending) return;
     if (!reportDoneToday) {
       setNewDayPinError("Сначала скачайте дневной отчёт за смену");
       return;
@@ -1209,7 +1214,13 @@ function Index() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={newDayOpen} onOpenChange={setNewDayOpen}>
+      <Dialog
+        open={newDayOpen}
+        onOpenChange={(v) => {
+          if (newDayCashRegister.isPending) return;
+          setNewDayOpen(v);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Новый день</DialogTitle>
@@ -1258,10 +1269,16 @@ function Index() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setNewDayOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setNewDayOpen(false)}
+              disabled={newDayCashRegister.isPending}
+            >
               Отмена
             </Button>
-            <Button onClick={tryNewDay}>Открыть новый день</Button>
+            <Button onClick={tryNewDay} disabled={newDayCashRegister.isPending}>
+              {newDayCashRegister.isPending ? "Закрываю смену…" : "Открыть новый день"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
