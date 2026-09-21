@@ -49,6 +49,7 @@ import { useCurrencyCostBasis } from "@/lib/currency-cost-basis";
 import { dateKeyToDate } from "@/lib/session-date";
 import { FileSpreadsheet } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLockedAction } from "@/lib/action-lock";
 
 export const Route = createFileRoute("/archive")({
   head: () => ({ meta: [{ title: "Архив смен — Кассовый лист" }] }),
@@ -172,27 +173,27 @@ function ArchivePage() {
     return true;
   }
 
-  async function addTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
+  const addTx = useLockedAction(async (tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => {
     if (!guard() || !openDate) return;
     await stageEdit({
       tx: { ...tx, id: tx.id ?? crypto.randomUUID(), ts: Date.parse(`${openDate}T12:00:00`) } as Transaction,
       kind: "insert",
     });
-  }
+  });
 
-  async function updateTx(id: string, patch: Partial<Transaction>) {
+  const updateTx = useLockedAction(async (id: string, patch: Partial<Transaction>) => {
     if (!guard()) return;
     const tx = dayTxs.find((t) => t.id === id);
     if (!tx) return;
     await stageEdit({ tx, kind: "update", patch: patch as PendingEdit["patch"] });
-  }
+  });
 
-  async function deleteTx(id: string) {
+  const deleteTx = useLockedAction(async (id: string) => {
     if (!guard()) return;
     const tx = dayTxs.find((t) => t.id === id);
     if (!tx) return;
     await stageEdit({ tx, kind: "delete" });
-  }
+  });
 
   // Архив — только закрытые смены: текущую правят на главной странице.
   const archivedDays = useMemo(
@@ -271,7 +272,7 @@ function ArchivePage() {
   }
 
 
-  async function confirmEdit() {
+  const confirmEdit = useLockedAction(async () => {
     if (!pending || !openDate || !preview) return;
     setBusy(true);
     try {
@@ -296,7 +297,7 @@ function ArchivePage() {
     } finally {
       setBusy(false);
     }
-  }
+  });
 
   return (
     <div className="min-h-screen bg-background pb-16">

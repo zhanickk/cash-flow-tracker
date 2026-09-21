@@ -28,6 +28,7 @@ import {
   type ContactWithBalance,
 } from "@/lib/contacts";
 import { searchContactsByName } from "@/lib/contact-search";
+import { useLockedAction } from "@/lib/action-lock";
 import { balanceTone, fmtContactBalance, type ContactCurrency } from "@/lib/contact-currencies";
 
 export const Route = createFileRoute("/contacts/")({
@@ -160,6 +161,16 @@ function CurrencyAccountsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [excelImportOpen, setExcelImportOpen] = useState(false);
+
+  // Создание контакта — под замком: два быстрых Enter заводили два
+  // одинаковых контакта.
+  const addContact = useLockedAction(() => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    createContact.mutate(trimmed);
+    setNewName("");
+    setAddOpen(false);
+  });
 
   const searched = useMemo(() => {
     const all = contacts ?? [];
@@ -299,21 +310,13 @@ function CurrencyAccountsPage() {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && newName.trim()) {
-                createContact.mutate(newName.trim());
-                setNewName("");
-                setAddOpen(false);
-              }
+              if (e.key === "Enter" && !e.repeat) addContact();
             }}
           />
           <DialogFooter>
             <Button
               disabled={!newName.trim()}
-              onClick={() => {
-                createContact.mutate(newName.trim());
-                setNewName("");
-                setAddOpen(false);
-              }}
+              onClick={addContact}
             >
               Создать
             </Button>

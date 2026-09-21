@@ -90,6 +90,7 @@ import { carryOutFrom, computeSimpleIncome, totalSimpleIncome } from "@/lib/simp
 import { useSessionCarryIn } from "@/lib/session-carry-in";
 import { useCurrencyCostBasis } from "@/lib/currency-cost-basis";
 import { searchContactsByName } from "@/lib/contact-search";
+import { useLockedAction } from "@/lib/action-lock";
 import {
   dateKeyToDate,
   formatDateKeyRu,
@@ -219,6 +220,10 @@ const CURRENCY_FLAG: Record<Currency, string> = {
 function handleEnterKey(e: React.KeyboardEvent, next?: () => void, submit?: () => void) {
   if (e.key !== "Enter") return;
   e.preventDefault();
+  // Зажатый Enter браузер повторяет десятки раз в секунду. Реагируем только на
+  // первое нажатие — иначе одно удержание клавиши превращается в пачку
+  // одинаковых действий.
+  if (e.repeat) return;
   if (next) next();
   else if (submit) submit();
 }
@@ -395,19 +400,19 @@ function Index() {
     return [...map.values()].sort((a, b) => Math.abs(b.netKzt) - Math.abs(a.netKzt));
   }, [transactions]);
 
-  function addTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
+  const saveTx = useLockedAction((tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => {
+    const full: Transaction = { ...tx, id: tx.id ?? crypto.randomUUID(), ts: Date.now() };
+    addCashTx.mutate(full);
+  });
+
+  const addTx = useLockedAction((tx: Omit<Transaction, "id" | "ts"> & { id?: string }) => {
     const look = carryLookalike(tx);
     if (look) {
       setCarryWarn({ tx, carry: look });
       return;
     }
     saveTx(tx);
-  }
-
-  function saveTx(tx: Omit<Transaction, "id" | "ts"> & { id?: string }) {
-    const full: Transaction = { ...tx, id: tx.id ?? crypto.randomUUID(), ts: Date.now() };
-    addCashTx.mutate(full);
-  }
+  });
 
   /** Ищет контакт по имени и НЕ создаёт его, если не нашёл. Опечатка в имени
    * больше не заводит новую запись в справочнике — вместо этого касса скажет,
@@ -626,7 +631,7 @@ function Index() {
     }
   }
 
-  async function handleDownloadReport() {
+  const handleDownloadReport = useLockedAction(async () => {
     if (!reportExcel || !reportData) return;
     setReportBusy(true);
     try {
@@ -636,9 +641,9 @@ function Index() {
     } finally {
       setReportBusy(false);
     }
-  }
+  });
 
-  async function handleDownloadSummary() {
+  const handleDownloadSummary = useLockedAction(async () => {
     setSummaryBusy(true);
     try {
       const rows = contactsWithBalances
@@ -651,9 +656,9 @@ function Index() {
     } finally {
       setSummaryBusy(false);
     }
-  }
+  });
 
-  async function submitNewContact() {
+  const submitNewContact = useLockedAction(async () => {
     const name = newContactName.trim();
     if (!name) {
       setNewContactError("Введите имя");
@@ -668,7 +673,7 @@ function Index() {
     setNewContactOpen(false);
     setNewContactName("");
     setNewContactError("");
-  }
+  });
 
   function openNewContactDialog(prefill = "") {
     setNewContactName(prefill);
@@ -684,7 +689,7 @@ function Index() {
     setNewDayOpen(true);
   }
 
-  function tryNewDay() {
+  const tryNewDay = useLockedAction(() => {
     // Закрытие уже идёт — второе нажатие игнорируем. 16 сентября «Новый день»
     // нажали пять раз за шесть секунд: каждое нажатие записало свой комплект
     // остатков, часть из них утроилась, всё это пришлось удалять руками, а
@@ -758,7 +763,7 @@ function Index() {
         onError: (e) => setNewDayPinError(e instanceof Error ? e.message : "Не удалось закрыть смену"),
       },
     );
-  }
+  });
 
   return (
     <div className="min-h-screen bg-background pb-24">

@@ -30,6 +30,7 @@ import {
 } from "@/lib/contacts-excel-import";
 import { useImportContactBalancesFromExcel, type ContactWithBalance } from "@/lib/contacts";
 import { fmtContactBalancePlain } from "@/lib/contact-currencies";
+import { useLockedAction } from "@/lib/action-lock";
 
 interface PreviewRow extends ParsedBalanceRow {
   matchedContactId: string | null;
@@ -134,7 +135,7 @@ export function ContactsExcelImportDialog({
   const usdRows = (rows ?? []).filter((r) => r.currency === "USD");
   const kztRows = (rows ?? []).filter((r) => r.currency === "KZT");
 
-  function handleConfirmImport() {
+  const handleConfirmImport = useLockedAction(() => {
     if (!rows) return;
     importMutation.mutate(
       {
@@ -164,7 +165,7 @@ export function ContactsExcelImportDialog({
         },
       },
     );
-  }
+  });
 
   return (
     <>

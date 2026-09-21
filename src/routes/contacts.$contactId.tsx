@@ -40,6 +40,7 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { balanceTone, fmtContactBalance, currencyLabel } from "@/lib/contact-currencies";
 import { txTypeLabel } from "@/lib/fx-pots";
+import { useLockedAction } from "@/lib/action-lock";
 
 const OPS_PREVIEW = 10;
 
@@ -103,7 +104,7 @@ function ContactDetailPage() {
     setEditingName(true);
   };
   const cancelEditName = () => setEditingName(false);
-  const saveEditName = () => {
+  const saveEditName = useLockedAction(() => {
     const trimmed = nameDraft.trim();
     if (!trimmed || trimmed === contact.name) {
       setEditingName(false);
@@ -113,12 +114,12 @@ function ContactDetailPage() {
       { contactId: contact.id, name: trimmed },
       { onSuccess: () => setEditingName(false) },
     );
-  };
+  });
 
   const visibleOps = showAllOps ? transactions : transactions.slice(0, OPS_PREVIEW);
   const hiddenOpsCount = Math.max(0, transactions.length - OPS_PREVIEW);
 
-  const submit = () => {
+  const submit = useLockedAction(() => {
     const raw = parseAmountInput(amount);
     if (!raw) return;
     let n: number;
@@ -138,7 +139,7 @@ function ContactDetailPage() {
     });
     setAmount("");
     setNote("");
-  };
+  });
 
   const toCurrency: "KZT" | "USD" = fromCurrency === "KZT" ? "USD" : "KZT";
   const convAmountNum = parseAmountInput(convAmount);
@@ -156,7 +157,7 @@ function ContactDetailPage() {
         ? `${n.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`
         : `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 
-  const submitConversion = () => {
+  const submitConversion = useLockedAction(() => {
     if (!convValid) return;
     addConversion.mutate({
       contactId: contact.id,
@@ -169,7 +170,7 @@ function ContactDetailPage() {
     setConvConfirmOpen(false);
     setConvAmount("");
     setConvRate("");
-  };
+  });
 
   return (
     <div className="min-h-screen bg-background pb-16">
@@ -190,6 +191,7 @@ function ContactDetailPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
+                    if (e.repeat) return;
                     saveEditName();
                   } else if (e.key === "Escape") {
                     cancelEditName();
@@ -428,13 +430,13 @@ function ContactDetailPage() {
               className="min-w-0"
               value={amount}
               onChange={(e) => setAmount(formatAmountInput(e.target.value))}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
+              onKeyDown={(e) => e.key === "Enter" && !e.repeat && submit()}
             />
             <Input
               placeholder="Комментарий"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
+              onKeyDown={(e) => e.key === "Enter" && !e.repeat && submit()}
             />
             <Button
               onClick={submit}
