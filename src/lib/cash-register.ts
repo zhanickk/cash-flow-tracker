@@ -1,3 +1,4 @@
+import { toDateKey } from "@/lib/session-date";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/supabase-paginate";
@@ -471,6 +472,12 @@ export function useNewDayCashRegister() {
       // дорогую ошибку: 5 сентября закрыли два раза, и перенос по доллару
       // прошёл по цепочке лишний круг — 524 292 → 948 516 → 1 751 275 вместо
       // 398 372. Внешне ничего не сломалось, разошлось молча.
+      // Смену из будущего не закрываем — даже если кнопку как-то обошли.
+      if (closingBusinessDate && closingBusinessDate > toDateKey(new Date())) {
+        throw new Error(
+          `Смена за ${closingBusinessDate} ещё не наступила — её нельзя закрыть раньше её дня.`,
+        );
+      }
       if (closingBusinessDate) {
         const { data: already, error: checkErr } = await supabase
           .from("people_money_spend_log")

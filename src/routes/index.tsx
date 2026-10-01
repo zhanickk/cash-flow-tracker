@@ -300,8 +300,15 @@ function Index() {
   const sessionDateLabel = useMemo(() => formatDateKeyRu(sessionDateKey), [sessionDateKey]);
   // Закрывать смену можно после NEW_DAY_HOUR либо когда её дата уже прошла
   // (день забыли закрыть — тогда ждать вечера незачем).
+  // Смена, дата которой ещё не наступила, закрываться не может. 1 октября
+  // смену закрыли в 19:56, открылась смена на 2.10, а в 20:04 закрыли и её —
+  // пустую, и касса уехала на 3.10: всё, что ввели бы 2-го, легло бы на 3-е.
+  // Открыть следующий день заранее по-прежнему можно — закрывается только
+  // смена с сегодняшней или прошедшей датой.
+  const sessionInFuture = sessionDateKey > toDateKey(new Date());
   const newDayTimeAllowed = useMemo(() => {
     const now = new Date();
+    if (sessionDateKey > toDateKey(now)) return false;
     if (now.getHours() >= NEW_DAY_HOUR) return true;
     return sessionDateKey < toDateKey(now);
   }, [sessionDateKey]);
@@ -701,7 +708,9 @@ function Index() {
     }
     if (!newDayTimeAllowed) {
       setNewDayPinError(
-        `Смену закрывают после ${NEW_DAY_HOUR}:00. Сейчас ${new Date().getHours()}:${String(new Date().getMinutes()).padStart(2, "0")}`,
+        sessionInFuture
+          ? `Смена за ${formatDateKeyRu(sessionDateKey)} ещё не наступила — её нельзя закрыть раньше её дня`
+          : `Смену закрывают после ${NEW_DAY_HOUR}:00. Сейчас ${new Date().getHours()}:${String(new Date().getMinutes()).padStart(2, "0")}`,
       );
       return;
     }
@@ -966,7 +975,9 @@ function Index() {
               !reportDoneToday
                 ? "Сначала скачайте дневной отчёт за смену"
                 : !newDayTimeAllowed
-                  ? `Смену закрывают после ${NEW_DAY_HOUR}:00`
+                  ? sessionInFuture
+                    ? `Смена за ${formatDateKeyRu(sessionDateKey)} ещё не наступила`
+                    : `Смену закрывают после ${NEW_DAY_HOUR}:00`
                   : "Перенести остатки на новый день"
             }
             onClick={openNewDayDialog}
@@ -1041,7 +1052,9 @@ function Index() {
         </div>
         {!newDayTimeAllowed && reportDoneToday && (
           <p className="text-center text-xs text-muted-foreground lg:col-span-2">
-            «Новый день» откроется после {NEW_DAY_HOUR}:00
+            {sessionInFuture
+              ? `Смена за ${formatDateKeyRu(sessionDateKey)} ещё не наступила — закрыть её можно в её день`
+              : `«Новый день» откроется после ${NEW_DAY_HOUR}:00`}
           </p>
         )}
         {!reportDoneToday && transactions.length > 0 && (
